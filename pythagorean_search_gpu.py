@@ -8,36 +8,39 @@ import numpy as np
 from numba import jit
 import sys
 
-@jit('void(uint64, uint64[:])')
-def validateW4Triple(w:np.uint64, triple:'np.ndarray[3,np.uint64]') -> np.int8:
-    x = np.uint64(triple[0])
-    y = np.uint64(triple[1])
-    z = np.uint64(triple[2])
-    sqr = np.uint64(x*x-w*w)
-    sqt = np.uint64(sqrt(sqr))
-    if sqt*sqt != sqr:
-        return np.int8(1)
-    sqr = np.uint64(y*y-w*w)
-    sqt = np.uint64(sqrt(sqr))
-    if sqt*sqt != sqr:
-        return np.int8(1)
-    sqr = np.uint64(z*z-w*w)
-    sqt = np.uint64(sqrt(sqr))
-    if sqt*sqt != sqr:
-        return np.int8(1)
-    print([w, x, y, z])
-    return np.int8(0)
+# old signature was
+# validateW4Triple(w:np.uint64, triple:'np.ndarray[3,np.uint64]') -> np.int8:
+
+@jit('void(uint64[:])')
+def validateW4Triple(triples:np.ndarray):
+    rows = np.uint32(triples.shape[0])
+    for row in np.arange(0, rows, dtype=np.uint64):
+        x = np.uint64(triples[row][0])
+        y = np.uint64(triples[row][1])
+        z = np.uint64(triples[row][2])
+        for w in np.arange(1, x, dtype=np.uint64):
+            sqr = np.uint64(x*x-w*w)
+            sqt = np.uint64(sqrt(sqr))
+            if sqt*sqt != sqr:
+                continue
+            sqr = np.uint64(y*y-w*w)
+            sqt = np.uint64(sqrt(sqr))
+            if sqt*sqt != sqr:
+                continue
+            sqr = np.uint64(z*z-w*w)
+            sqt = np.uint64(sqrt(sqr))
+            if sqt*sqt != sqr:
+                continue
+            print([w, x, y, z])
+
+        if row % 1000 == 0:
+            print(row)
 
 def main() -> int:
     df = pd.read_csv('pythagorean_2000000.csv')
     
-    triples = df[['x', 'z', 'w']].values
-    rows = triples.shape[0]
-    for row in range(0, rows):
-        triple = triples[row]
-        x = triple[0]
-        for w in range(1, x):
-            validateW4Triple(w, triple)
+    triples = df[['x', 'z', 'w']].to_numpy()
+    validateW4Triple(triples)   
 
     return 0
 

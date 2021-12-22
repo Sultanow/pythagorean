@@ -1,5 +1,5 @@
-# GPU-optimized Python version of script from
-# https://math.stackexchange.com/questions/3278660/solutions-to-a-system-of-three-equations-with-pythagorean-triples
+# GPU-optimized Script for searching a fourth square for the problem described at MSE here:
+# https://math.stackexchange.com/questions/3286376/four-squares-such-that-the-difference-of-any-two-is-a-square
 
 from math import sqrt
 import pandas as pd

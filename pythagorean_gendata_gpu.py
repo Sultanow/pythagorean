@@ -46,7 +46,7 @@ def generateData(limit: np.uint64, triples: np.ndarray) -> np.uint32: # -> list[
     return rows
 
 def main() -> int:
-    limit = 20000000
+    limit = 6000000
     triples = np.empty((limit,6), dtype=np.uint64)
 
     start = time.time()

@@ -12,9 +12,9 @@ import sys
 @jit('void(uint64)')
 def generateData(limit: np.uint64):
     rows = np.uint32(0)
-    for t in np.arange(17220, limit+1, dtype=np.uint64):
-        for s in np.arange(13104, t, dtype=np.uint64):
-            for u in np.arange(117040, limit+1, dtype=np.uint64):
+    for t in np.arange(17835, limit+1, dtype=np.uint64):
+        for s in np.arange(13572, t, dtype=np.uint64):
+            for u in np.arange(121220, limit+1, dtype=np.uint64):
                 if t != u:
                     tt = np.uint64(t*t)
                     uu = np.uint64(u*u)

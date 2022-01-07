@@ -37,7 +37,7 @@ def validateW4Triple(triples:np.ndarray):
             print(row)
 
 def main() -> int:
-    df = pd.read_csv('pythagorean_6000000.csv')
+    df = pd.read_csv('pythagorean_12000000.csv')
     
     triples = df[['x', 'z', 'w']].to_numpy()
     validateW4Triple(triples)   

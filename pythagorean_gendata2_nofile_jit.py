@@ -11,7 +11,6 @@ import sys
 
 @jit('void(uint64)')
 def generateData(limit: np.uint64):
-    rows = np.uint32(0)
     for t in np.arange(17835, limit+1, dtype=np.uint64):
         for s in np.arange(13572, t, dtype=np.uint64):
             for u in np.arange(121220, limit+1, dtype=np.uint64):

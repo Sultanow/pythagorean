@@ -28,8 +28,7 @@ def generateData(limit: np.uint64):
                             t_s = np.uint64(tt-ss)
                             sqr = np.uint64(sqrt(t_s))
                             if sqr*sqr == t_s:
-                                str_row = str(s)+","+str(t)+","+str(u)+","+str(ss)+","+str(tt)+","+str(uu)+","+str(t_u)+","+str(t_u_s)+","+str(t_s)
-                                print(str_row)
+                                print([s, t, u, ss, tt, uu, t_u, t_u_s, t_s])
                                 
 
 def main() -> int:

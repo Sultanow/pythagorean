@@ -9,7 +9,7 @@ from numba import jit
 import time
 import sys
 
-@jit('void(uint64)')
+@jit('void(uint64)', forceobj=True)
 def generateData(limit: np.uint64):
     for t in np.arange(17835, limit+1, dtype=np.uint64):
         for s in np.arange(13572, t, dtype=np.uint64):
@@ -31,7 +31,7 @@ def generateData(limit: np.uint64):
                                 
 
 def main() -> int:
-    limit = 500000
+    limit = np.uint64(500000)
 
     start = time.time()
     generateData(limit)

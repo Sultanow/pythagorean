@@ -1,4 +1,4 @@
-#The Challenge and aim of this project is to find four squares whose difference in each is again a square
+# The Challenge and aim of this project is to find four squares whose difference in each is again a square
 
 This challenge is inspired by the question [Four squares such that the difference of any two is a square?](https://math.stackexchange.com/questions/3286376/four-squares-such-that-the-difference-of-any-two-is-a-square) on Math Stack Exchange.
 

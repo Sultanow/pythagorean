@@ -1,7 +1,7 @@
 numba = None
 import numba
 
-import time, timeit, os, math, numpy as np
+import multiprocessing, time, timeit, os, math, numpy as np
 
 if numba is None:
     class numba:
@@ -18,7 +18,7 @@ if numba is None:
 
 @numba.njit(cache = True, parallel = True)
 def create_filters():
-    Ks = [np.uint32(e) for e in [2 * 2 * 3 * 3 * 5 * 7 * 11 * 13,    17 * 19 * 23 * 29 * 31 * 37]]
+    Ks = [np.uint32(e) for e in [2 * 2 * 2 * 3 * 3 * 5 * 7 * 11 * 13,    17 * 19 * 23 * 29 * 31 * 37]]
     filts = []
     for i, K in enumerate(Ks):
         filt = np.zeros((K,), dtype = np.uint8)
@@ -74,13 +74,14 @@ def filter_chain_create_load(K, ix):
     with open(fname, 'rb') as f:
         return np.copy(np.frombuffer(f.read(), dtype = np.uint16).reshape(len(ix), K, 2))
 
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])', cache = True,
+@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])',
+    cache = True, #inline = 'always',
     locals = dict(j = numba.uint32, tK = numba.uint32, rpos = numba.uint64))
 def gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc):
     mark = np.zeros((K,), dtype = np.uint8)
     while True:
         start_s = (off + np.int64(t) ** 2) % K
-        tK = t % K
+        tK = np.uint32(t % K)
         if mark[tK]:
             return np.zeros((0,), dtype = np.uint32)
         mark[tK] = 1
@@ -89,10 +90,10 @@ def gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc):
         t += 1
     j = np.searchsorted(fi, start_s)
     assert fi[j] == start_s
-    r = np.zeros((cnt,), dtype = np.uint32)
+    r = np.zeros((np.int64(cnt),), dtype = np.uint32)
     r[0] = t
     rpos = 1
-    tK = t % K
+    tK = np.uint32(t % K)
     while True:
         j, dt = fc[j, tK]
         t += dt
@@ -107,7 +108,8 @@ def gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc):
         r[rpos] = t
         rpos += 1
 
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])', cache = True,
+@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])',
+    cache = True, #inline = 'always',
     locals = dict(rpos = numba.uint64, tK = numba.uint32))
 def gen_squares_candidates_A_slow(cnt, lim, off, t, K, f, fi, fc):
     mark = np.zeros((K,), dtype = np.uint8)
@@ -131,14 +133,15 @@ def gen_squares_candidates_A_slow(cnt, lim, off, t, K, f, fi, fc):
             found = True
         t += 1
 
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])', cache = True,
+@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])',
+    cache = True, #inline = 'always',
     locals = dict(rpos = numba.uint64))
 def gen_squares(cnt, lim, off, t, K, f, fi, fc, k1, f1):
     def is_square(x):
         assert x >= 0
         if not f1[x % k1]:
             return False
-        root = np.uint64(math.sqrt(x) + 0.5)
+        root = np.uint64(math.sqrt(np.float64(x)) + 0.5)
         return root * root == x
     rA = gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc)
     r = np.zeros((len(rA),), dtype = np.uint32)
@@ -152,81 +155,61 @@ def gen_squares(cnt, lim, off, t, K, f, fi, fc, k1, f1):
         rpos += 1
     return r[:rpos]
 
-@numba.njit('void(i8, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])', cache = True, parallel = True,
+@numba.njit('u8[:, :, :](i8, i8, i8, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])', cache = True, parallel = True,
     locals = dict(t = numba.int64, s = numba.int64, u = numba.int64, i = numba.int64))
-def generateData(limit, k0, f0, fi0, fc0, k1, f1):
+def generateData(cpu_count, L, limit, k0, f0, fi0, fc0, k1, f1):
     def is_square(x):
         if not (f0[x % k0] and f1[x % k1]):
             return False
-        root = np.uint64(math.sqrt(x) + 0.5)
+        root = np.uint64(math.sqrt(np.float64(x)) + 0.5)
         return root * root == x
     
     cnt_limit = pow(limit, 0.66)
+    start = 2
     
-    tsl0 = [[(np.int64(0), np.int64(0), np.int64(0), np.int64(0), np.int64(0))] for i in range(limit + 1)]
+    A = np.zeros((limit - start, 2, 1), dtype = np.uint64)
+    A[:, 0, 0] = np.arange(start, limit)
+    A[:, 1, 0] = A[:, 0, 0] ** 2
     
-    for s in numba.prange(2, limit + 1):
-        if s % 20_000 == 0 or s + 1 >= limit + 1:
-            print(f's {str(s).rjust(7)}/{limit}')
-        ss = s * s
-        t_sqrs = gen_squares(cnt_limit, limit + 1, -np.int64(ss), s + 1, k0, f0, fi0, fc0, k1, f1)
-        for t in t_sqrs:
-            tt = t * t
-            t_s = tt - ss
-            if 0 and not is_square(t_s):
-                print('non-square t_s', t_s, 't', t, 's', s)
-                assert False
-            tsl0[s].append((np.int64(t), np.int64(s), np.int64(tt), np.int64(ss), np.int64(t_s)))
+    nblocks = cpu_count * 64
     
-    tsl = []
-    for e in tsl0:
-        tsl.extend(e[1:])
-    
-    tl = {}
-    for e in tsl:
-        tl[e[2]] = e[0]
-    tl = sorted(tl.items())
-    
-    len_tl = len(tl)
-    tul0 = [[(np.int64(0), np.int64(0), np.int64(0), np.int64(0))] for i in range(len_tl)]
-    
-    for i in numba.prange(len_tl):
-        tt, t = tl[i]
-        if i % 20_000 == 0 or i + 1 >= len(tl):
-            len_tl = len_tl
-            print(f't {str(i).rjust(7)}/{len_tl}')
-        u_sqrs = gen_squares(cnt_limit, limit + 1, np.int64(tt), 2, k0, f0, fi0, fc0, k1, f1)
-        for u in u_sqrs:
-            uu = u * u
-            t_u = tt + uu
-            if 0 and not is_square(t_u):
-                print('non-square t_u', t_u, 't', t, 'u', u)
-                assert False
-            tul0[i].append((np.int64(t), np.int64(u), np.int64(uu), np.int64(t_u)))
-    
-    tul = []
-    for e in tul0:
-        tul.extend(e[1:])
-    
-    tul = sorted(tul)
-    
-    tul_idx = {}
-    for i, e in enumerate(tul):
-        if e[0] not in tul_idx:
-            tul_idx[e[0]] = i
-    
-    for t, s, tt, ss, t_s in tsl:
-        if t not in tul_idx:
-            continue
-        for i in range(tul_idx[t], 1 << 60):
-            if i >= len(tul) or tul[i][0] != t:
-                break
-            u, uu, t_u = tul[i][1:]
-            t_u_s = t_u - ss
-            if not is_square(t_u_s):
-                continue
-            with numba.objmode():
-                print([s, t, u, ss, tt, uu, t_u, t_u_s, t_s], flush = True)
+    while True:
+        NAs = [np.zeros((1 << 10, 2, A.shape[-1] + 1), dtype = np.uint64) for i in range(nblocks)]
+        na_poss = [np.int64(0) for i in range(nblocks)]
+        block = (A.shape[0] + nblocks - 1) // nblocks
+        
+        for iMblock in range(0, nblocks, cpu_count):
+            for iblock in numba.prange(iMblock, min(iMblock + cpu_count, nblocks)):
+                for ie in range(iblock * block, min(A.shape[0], (iblock + 1) * block)):
+                    e = A[ie]
+                    #if ie & ((1 << 13) - 1) == 0:
+                    #    print(f'l {A.shape[-1] + 1}/{L}', f'i {str(ie >> 10).rjust(5)}/{A.shape[0] >> 10} K')
+                    na_pos_start = na_poss[iblock]
+                    for e2 in gen_squares(cnt_limit, limit, e[1, -1], start, k0, f0, fi0, fc0, k1, f1):
+                        v = np.uint64(e[1, -1] + np.uint64(e2) ** 2)
+                        for e3 in e[1, :-1]:
+                            if not is_square(v - e3):
+                                break
+                        else:
+                            if na_poss[iblock] >= NAs[iblock].shape[0]:
+                                NAs[iblock] = np.concatenate((NAs[iblock], np.zeros((NAs[iblock].shape[0] // 2,) +
+                                    NAs[iblock].shape[1:], dtype = np.uint64)), axis = 0)
+                            NAs[iblock][na_poss[iblock], 0, -1] = np.uint64(e2)
+                            NAs[iblock][na_poss[iblock], 1, -1] = v
+                            na_poss[iblock] += 1
+                    for j in range(na_pos_start, na_poss[iblock]):
+                        NAs[iblock][j, :, : NAs[iblock].shape[-1] - 1] = e
+            print(f'l {A.shape[-1] + 1}/{L}', f'i {str(min(A.shape[0], block * min(nblocks, iMblock + cpu_count)) >> 10).rjust(5)}/{A.shape[0] >> 10} K')
+        print()
+        
+        A = NAs[0][:na_poss[0]]
+        for i in range(1, nblocks):
+            A = np.concatenate((A, NAs[i][:na_poss[i]]), axis = 0)
+        if A.shape[-1] >= L:
+            break
+
+    print(A.shape[0], 'solutions')
+    return A
 
 def test():        
     filts = create_filters()
@@ -258,16 +241,24 @@ def test():
 def main():
     #test(); return
     
-    limit = np.uint64(1000_000)
+    limit = 3_000_000
+    L = 3
     
     filts = create_filters()
     fc0 = filter_chain_create_load(filts[0][0], filts[0][2])
     
     start = time.time()
-    generateData(limit, filts[0][0], filts[0][1], filts[0][2], fc0, filts[1][0], filts[1][1])
+    res = generateData(multiprocessing.cpu_count(), L, limit,
+        filts[0][0], filts[0][1], filts[0][2], fc0, filts[1][0], filts[1][1])
     end = time.time()
     
-    print("Time elapsed: {0}".format(round(end - start, 3)))
-
+    fname = f'solutions.{L}.{limit}'
+    with open(fname, 'w', encoding = 'utf-8') as f:
+        for e in res:
+            f.write(str([int(e2) for e2 in e[0]] + [int(e2) for e2 in e[1]]) + '\n')
+    print(f"Written file '{fname}'")
+    
+    print("Time elapsed: {0}".format(round(end - start, 3)), 'sec')
+    
 if __name__ == '__main__':
     main()

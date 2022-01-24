@@ -9,7 +9,7 @@ def create_filters():
         a %= K
         filts.append((K, np.zeros((K,), dtype = np.uint8)))
         filts[-1][1][a] = 1
-        print(f'filter {i} ratio', round(len(np.flatnonzero(filts[-1][1])) / K, 4))
+        #print(f'filter {i} ratio', round(len(np.flatnonzero(filts[-1][1])) / K, 4))
     return filts
 
 @numba.njit('void(i8, u4, u1[:], u4, u1[:])', cache = False, parallel = True,
@@ -24,8 +24,8 @@ def generateData(limit, k0, f0, k1, f1):
     tsl = []
     
     for t in range(2, limit + 1):
-        if t % 5000 == 0:
-            print('t', t)
+        #if t % 5000 == 0:
+        #    print('t', t)
         for s in np.arange(2, t):
             tt = t * t
             ss = s * s
@@ -35,11 +35,16 @@ def generateData(limit, k0, f0, k1, f1):
             tsl.append([t, s, tt, ss, t_s])
     
     tl = sorted({e[2]: e[0] for e in tsl}.items())
+    #tl = {}
+    #for e in tsl:
+    #    tl[e[2]] = e[0]
+    #tl = sorted(tl.items())
+    
     tul = []
     
     for u in range(2, limit + 1):
-        if u % 5000 == 0:
-            print('u', u)
+        #if u % 5000 == 0:
+        #    print('u', u)
         uu = u * u
         for tt, t in tl:
             t_u = tt + uu
@@ -68,8 +73,8 @@ def generateData(limit, k0, f0, k1, f1):
                 print([s, t, u, ss, tt, uu, t_u, t_u_s, t_s], flush = True)
 
 def main() -> int:
-    limit = np.uint64(10_000)
-    
+    limit = np.uint64(400_000)
+
     filt = create_filters()
     
     start = time.time()

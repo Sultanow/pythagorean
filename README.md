@@ -10,7 +10,7 @@ I implemented a Python script [pythagorean_gendata2_nofile_jit.py](https://githu
 
 With the help of [Arty](https://stackoverflow.com/users/941531/arty), who developed an enhaced version, I could manage to find a first match. This breakthrough origins from the question on Stack Overflow [Optimizing an algorithm with 3 inner loops for searching 6-tuples of squares using Python](https://stackoverflow.com/questions/70824573/optimizing-an-algorithm-with-3-inner-loops-for-searching-6-tuples-of-squares-usi?noredirect=1#comment125210150_70824573).
 
-In order to make the final step, namely to identify these four squares, I implemented the Mathematica Script [pythagorean.nb](https://github.com/Sultanow/pythagorean/blob/main/pythagorean.nb), which today, the Sunday, 23 January 2022 outputs an "almost solution": `[w=40579, x=-58565, y=-65221]`.
+In order to make the final step, namely to identify these four squares, I implemented the Mathematica Script [pythagorean.nb](https://github.com/Sultanow/pythagorean/blob/main/pythagorean.nb), which outputs an "almost solution": `[w=40579, x=-58565, y=-65221]`.
 
 From the Data Set [pythagorean_stu_Arty_.txt](https://github.com/Sultanow/pythagorean/blob/main/pythagorean_stu_Arty_.txt) I selected the corresponding row:
 

@@ -18,20 +18,11 @@ From the Data Set [pythagorean_stu_Arty_.txt](https://github.com/Sultanow/pythag
 42228, 51060, 185472, 1783203984, 2607123600, 34399862784, 37006986384, 35223782400, 823919616
 ```
 
-Hence `[s=42228^2,t=51060^2,u=185472^2]`. To calculate the last variable `[z]`, I need to use the equation `u+y^2=z^2` leading to `z=196605,294`. The last trick is to multiply all integers `[w,x,y,z]` with `100^2=10000`, which brings us to the solution:
+Hence `[s=42228^2,t=51060^2,u=185472^2]`. To calculate the last variable `[z]`, I need to use the equation `u+y^2=z^2` leading to `z=196605.294`. The last trick is to multiply all integers `[w,x,y,z]` with `100^2=10000`, which brings us closer to a solution:
 
 ```
 w=405790000
 x=585650000
 y=652210000
 z=1966052940
-```
-
-Since `1966052940=32767549⋅2⋅2⋅3⋅5`, we can reduce our solution to:
-
-```
-w=101447500
-x=146412500
-y=163052500
-z=491513235
 ```

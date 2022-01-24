@@ -27,7 +27,7 @@ y=652210000
 z=1966052940
 ```
 
-Since `1966052940=32767549⋅22⋅3⋅5`, we can reduce our solution to:
+Since `1966052940=32767549⋅2⋅2⋅3⋅5`, we can reduce our solution to:
 
 ```
 w=101447500

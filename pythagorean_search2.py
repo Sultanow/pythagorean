@@ -15,8 +15,7 @@ def main() -> int:
         s=int(row[3])
         t=int(row[4])
         u=int(row[5])
-        #solve(x*x-w*w==s, y*y-w*w==t, z*z-y*y==u, w!=0)
-        solve(x*x-w*w==s, y*y-w*w==t, z*z-y*y==u, w!=0)
+        solve(x**2-w**2==s, y**2-w**2==t, z**2-y**2==u, w!=0)
 
     return 0
 

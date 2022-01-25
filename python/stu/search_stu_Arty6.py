@@ -322,7 +322,7 @@ def solve(limit):
     
     # https://github.com/Sultanow/pythagorean/blob/main/pythagorean_stu_Arty_.txt?raw=true
     ifname = 'pythagorean_stu_Arty_.txt'
-    iurl = f'https://github.com/Sultanow/pythagorean/blob/main/{ifname}?raw=true'
+    iurl = f'https://github.com/Sultanow/pythagorean/blob/main/data/{ifname}?raw=true'
     if not os.path.exists(ifname):
         print(f'Downloading: {iurl}')
         data = requests.get(iurl).content

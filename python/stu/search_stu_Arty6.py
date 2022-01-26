@@ -29,7 +29,7 @@ if numba is None:
 
 @numba.njit(cache = True, parallel = True)
 def create_filters():
-    Ks = [np.uint32(e) for e in [2 * 2 * 3 * 3 * 5 * 7 * 11 * 13,    17 * 19 * 23 * 29 * 31 * 37]]
+    Ks = [np.uint32(e) for e in [2 * 2 * 2 * 3 * 3 * 5 * 7 * 11 * 13,    17 * 19 * 23 * 29 * 31 * 37]]
     filts = []
     for i in range(len(Ks)):
         K = Ks[i]
@@ -86,87 +86,6 @@ def filter_chain_create_load(K, ix):
     with open(fname, 'rb') as f:
         return np.copy(np.frombuffer(f.read(), dtype = np.uint16).reshape(len(ix), K, 2))
 
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])',
-    cache = True, #inline = 'always',
-    locals = dict(j = numba.uint32, tK = numba.uint32, rpos = numba.uint64))
-def gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc):
-    mark = np.zeros((K,), dtype = np.uint8)
-    while True:
-        start_s = (off + np.int64(t) ** 2) % K
-        tK = np.uint32(t % K)
-        if mark[tK]:
-            return np.zeros((0,), dtype = np.uint32)
-        mark[tK] = 1
-        if f[start_s]:
-            break
-        t += 1
-    j = np.searchsorted(fi, start_s)
-    assert fi[j] == start_s
-    r = np.zeros((np.int64(cnt),), dtype = np.uint32)
-    r[0] = t
-    rpos = 1
-    tK = np.uint32(t % K)
-    while True:
-        j, dt = fc[j, tK]
-        t += dt
-        tK += dt
-        if tK >= K:
-            tK -= K
-        if t >= lim:
-            return r[:rpos]
-        if rpos >= len(r):
-            r = np.concatenate((r, np.zeros((len(r),), dtype = np.uint32)))
-        assert rpos < len(r)
-        r[rpos] = t
-        rpos += 1
-
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :])',
-    cache = True, #inline = 'always',
-    locals = dict(rpos = numba.uint64, tK = numba.uint32))
-def gen_squares_candidates_A_slow(cnt, lim, off, t, K, f, fi, fc):
-    mark = np.zeros((K,), dtype = np.uint8)
-    r = np.zeros((cnt,), dtype = np.uint32)
-    rpos = 0
-    found = False
-    while True:
-        tK = t % K
-        if not found:
-            if mark[tK]:
-                return np.zeros((0,), dtype = np.uint32)
-            mark[tK] = 1
-        if f[(off + np.int64(t) ** 2) % K]:
-            if t >= lim:
-                return r[:rpos]
-            if rpos >= len(r):
-                r = np.concatenate((r, np.zeros((len(r),), dtype = np.uint32)), axis = 0)
-            assert rpos < len(r)
-            r[rpos] = t
-            rpos += 1
-            found = True
-        t += 1
-
-@numba.njit('u4[:](i8, i8, i8, u4, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])',
-    cache = True, #inline = 'always',
-    locals = dict(rpos = numba.uint64))
-def gen_squares(cnt, lim, off, t, K, f, fi, fc, k1, f1):
-    def is_square(x):
-        assert x >= 0
-        if not f1[x % k1]:
-            return False
-        root = np.uint64(math.sqrt(np.float64(x)) + 0.5)
-        return root * root == x
-    rA = gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc)
-    r = np.zeros((len(rA),), dtype = np.uint32)
-    rpos = 0
-    for t in rA:
-        if not is_square(off + np.int64(t) ** 2):
-            continue
-        while np.int64(rpos) >= np.int64(r.shape[0]):
-            r = np.concatenate((r, np.zeros_like(r)), axis = 0)
-        r[rpos] = t
-        rpos += 1
-    return r[:rpos]
-
 @numba.njit(
     #'void(i8, i8, u4, u1[:], u4[:], u2[:, :, :], u4, u1[:])',
     numba.types.Tuple([numba.uint64[:], numba.uint32[:]])(
@@ -176,15 +95,64 @@ def gen_squares(cnt, lim, off, t, K, f, fi, fc, k1, f1):
     locals = dict(x = numba.uint64, Atpos = numba.uint64, Btpos = numba.uint64, bpos = numba.uint64))
 def create_table(limit, cpu_count, k0, f0, fi0, fc0, k1, f1):
     print('Computing tables...')
-
+    
+    def gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc):
+        mark = np.zeros((np.int64(K),), dtype = np.uint8)
+        while True:
+            start_s = np.int64((np.int64(off) + np.int64(t) ** 2) % K)
+            tK = np.uint32(np.int64(t) % np.int64(K))
+            if mark[tK]:
+                return np.zeros((0,), dtype = np.uint32)
+            mark[tK] = 1
+            if f[start_s]:
+                break
+            t += 1
+        j = np.int64(np.searchsorted(fi, start_s))
+        assert fi[j] == start_s
+        r = np.zeros((np.int64(cnt),), dtype = np.uint32)
+        r[0] = t
+        rpos = np.int64(1)
+        tK = np.uint32(np.int64(t) % np.int64(K))
+        while True:
+            j, dt = fc[j, tK]
+            t += dt
+            tK += dt
+            if tK >= np.uint32(K):
+                tK -= np.uint32(K)
+            if t >= lim:
+                return r[:rpos]
+            if np.int64(rpos) >= np.int64(r.shape[0]):
+                r = np.concatenate((r, np.zeros_like(r)), axis = 0)
+            assert rpos < len(r)
+            r[rpos] = t
+            rpos += 1
+    
+    def gen_squares(cnt, lim, off, t, K, f, fi, fc, k1, f1):
+        def is_square(x):
+            assert x >= 0
+            if not f1[np.int64(x) % np.uint32(k1)]:
+                return False
+            root = np.uint64(math.sqrt(np.float64(x)) + 0.5)
+            return root * root == x
+        rA = gen_squares_candidates_A(cnt, lim, off, t, K, f, fi, fc)
+        r = np.zeros_like(rA)
+        rpos = np.int64(0)
+        for t in rA:
+            if not is_square(np.int64(off) + np.int64(t) ** 2):
+                continue
+            assert np.int64(rpos) < np.int64(r.shape[0])
+            r[rpos] = t
+            rpos += 1
+        return r[:rpos]
+    
     with numba.objmode(gtb = 'f8'):
         gtb = time.time()
     
     search_start = 2
     cnt_limit = max(1 << 4, round(pow(limit, 0.66)))
     
-    nblocks2 = cpu_count
-    nblocks = nblocks2 * 128
+    nblocks2 = cpu_count * 8
+    nblocks = nblocks2 * 64
     block = (limit + nblocks - 1) // nblocks
     
     At = np.zeros((limit + 1,), dtype = np.uint64)
@@ -197,7 +165,7 @@ def create_table(limit, cpu_count, k0, f0, fi0, fc0, k1, f1):
         cur_blocks = min(nblocks, iMblock + nblocks2) - iMblock
         As = np.zeros((cur_blocks, block), dtype = np.uint64)
         As_size = np.zeros((cur_blocks,), dtype = np.uint64)
-        Bs = np.zeros((cur_blocks, 1 << 19,), dtype = np.uint32)
+        Bs = np.zeros((cur_blocks, 1 << 16,), dtype = np.uint32)
         Bs_size = np.zeros((cur_blocks,), dtype = np.uint64)
         for iblock in numba.prange(cur_blocks):
             iblock0 = iMblock + iblock
@@ -275,7 +243,7 @@ def find_solutions(tA, tB, stu):
         return bool(root * root == x), int(root)
     
     assert tA[-1] == tB.shape[0]
-
+    
     fname = f'stu_solutions.{tA.shape[0] - 1}'
     with open(fname, 'w', encoding = 'utf-8') as fout:
         for s, t, u in stu:
@@ -308,7 +276,7 @@ def find_solutions(tA, tB, stu):
                         'z': z if z_isq else math.sqrt(z2),
                     })
             fout.write(json.dumps(r, ensure_ascii = False) + '\n')
-
+    
     print(f'STU solutions written to {fname}')
 
 def solve(limit):
@@ -320,7 +288,7 @@ def solve(limit):
     tA, tB = table_create_load(limit, multiprocessing.cpu_count(),
         filts[0][0], filts[0][1], filts[0][2], fc0, filts[1][0], filts[1][1])
     
-    # https://github.com/Sultanow/pythagorean/blob/main/pythagorean_stu_Arty_.txt?raw=true
+    # https://github.com/Sultanow/pythagorean/blob/main/data/pythagorean_stu_Arty_.txt?raw=true
     ifname = 'pythagorean_stu_Arty_.txt'
     iurl = f'https://github.com/Sultanow/pythagorean/blob/main/data/{ifname}?raw=true'
     if not os.path.exists(ifname):
@@ -341,7 +309,7 @@ def solve(limit):
     find_solutions(tA, tB, stu)
     
 def main():
-    limit = 10_000_000
+    limit = 100_000
     solve(limit)
 
 if __name__ == '__main__':

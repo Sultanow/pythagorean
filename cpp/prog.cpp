@@ -1,3 +1,4 @@
+#include <cstring>
 #include <cstdint>
 #include <future>
 #include <stdexcept>
@@ -601,7 +602,8 @@ void Test() {
 int main() {
     try {
         //Test(); return 0;
-        Solve((1ULL << 32) - 2);
+        //Solve((1ULL << 32) - 2);
+        Solve(1ULL << 28);
     } catch (std::exception const & ex) {
         std::cout << "Exception: " << ex.what() << std::endl;
     }

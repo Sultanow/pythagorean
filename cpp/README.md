@@ -2,7 +2,7 @@ On an Ubuntu machine do the following:
 
 install g++-11
 
-```bash
+```console
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 sudo apt update
 sudo apt install g++-11

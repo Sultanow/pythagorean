@@ -1,3 +1,5 @@
+###Arty's programm to search pythagorean triples and quadruples
+
 On an Ubuntu machine do the following:
 
 install g++-11

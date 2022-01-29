@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <future>

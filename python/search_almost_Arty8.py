@@ -1,3 +1,6 @@
+# Run it using:
+# python search_almost_Arty8.py "C:\Users\esultano\Downloads\cpp_solutions.3.536870910" > almost.txt
+
 import sys
 with open(sys.argv[1], 'r', encoding = 'utf-8') as f:
     m = {}

@@ -1,5 +1,5 @@
-#include <cstring>
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <stdexcept>
 #include <string>
@@ -16,6 +16,9 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <type_traits>
+#include <sstream>
+#include <memory>
 
 #define ASSERT_MSG(cond, msg) { if (!(cond)) throw std::runtime_error("Assetion (" #cond ") failed at '" __FILE__ "':" + std::to_string(__LINE__) + "! Msg: '" + std::string(msg) + "'."); }
 #define ASSERT(cond) ASSERT_MSG(cond, "")
@@ -31,12 +34,31 @@ double Time() {
         std::chrono::high_resolution_clock::now() - gtb).count();
 }
 
+static std::ofstream & LogFile() {
+    static std::ofstream f("cpp_solutions.log");
+    return f;
+}
+
+class Log {
+public:
+    Log() : ss_(std::make_shared<std::stringstream>()) {}
+    ~Log() {
+        std::cout << ss_->str() << std::flush;
+        LogFile() << ss_->str() << std::flush;
+    }
+    std::stringstream & Get() const { return *ss_; }
+private:
+    std::shared_ptr<std::stringstream> ss_;
+};
+
+#define LOG Log().Get()
+
 class Timing {
 public:
     Timing(std::string const & name)
         : name_(name), tb_(Time()) {}
     ~Timing() {
-        std::cout << "'" << name_ << "' time " << std::fixed
+        LOG << "'" << name_ << "' time " << std::fixed
             << std::setprecision(3) << (Time() - tb_) << " sec" << std::endl;
     }
 private:
@@ -145,7 +167,7 @@ void GenPrimes(T glast0, std::vector<T> & res) {
     };
     
     while (!ps.empty()) {
-        std::cout << "ps " << ps.size() << " " << ps.back() << std::endl;
+        //LOG << "ps " << ps.size() << " " << ps.back() << std::endl;
         
         {
             std::vector<std::future<void>> asyncs;
@@ -259,7 +281,7 @@ void FactorRange(u64 const limit, std::vector<u32> & fs) {
     std::vector<u32> ps;
     {
         auto const p_bits = size_t(std::log2(std::max<double>(1, std::sqrt(fs.size()))) + 1);
-        Timing tim("Gen " + std::to_string(p_bits) + "-bit primes");
+        Timing tim("Generate " + std::to_string(p_bits) + "-bit primes");
         CreateLoadPrimes(16, ps);
     }
     Timing tim("Factor range");
@@ -369,12 +391,19 @@ inline u64 ISqrt(u64 S) {
 }
 
 BitVector SqrFilter() {
-    Timing tim("Square filter compute");
-    u64 const K = 2ULL * 2 * 3 * 3 * 5 * 7 * 11 * 13 * 17 * 19;
+    u64 constexpr K = 2ULL * 2 * 3 * 3 * 5 * 7 * 11 * 13 * 17 * 19;
     BitVector bv;
-    bv.Resize(K);
+    {
+        Timing tim("Square filter compute");
+        bv.Resize(K);
+        for (u64 i = 0; i < K; ++i)
+            bv.Set((i * i) % K);
+    }
+    u64 cnt1 = 0;
     for (u64 i = 0; i < K; ++i)
-        bv.Set((i * i) % K);
+        cnt1 += u8(bv.Get(i));
+    LOG << "Square filter ratio " << std::fixed
+        << std::setprecision(5) << double(cnt1) / K << std::endl;
     return bv;
 }
 
@@ -402,12 +431,15 @@ void FindSquaresSlow(u64 const N, std::vector<std::tuple<u64, u64>> & sqrs) {
 }
 
 void Solve(u64 limit, size_t const L = 4) {
-    Timing gtim("Total Solve");
-    
-    ASSERT(limit <= u64(u32(-1)) + 1);
-    
     size_t constexpr max_L = 4;
     ASSERT(L <= max_L);
+    
+    Timing gtim("Total Solve");
+    
+    ASSERT_MSG(limit <= (1ULL << 32), "limit " + std::to_string(limit));
+    
+    if ((1ULL << 32) - 1 <= limit && limit <= (1ULL << 32))
+        limit = (1ULL << 32) - 2;
     
     std::vector<u32> fs;
     FactorRange(limit, fs);
@@ -420,7 +452,9 @@ void Solve(u64 limit, size_t const L = 4) {
         u32 x = 0;
     };
     
-    std::vector<std::array<Entry, max_L>> A;
+    using AType = std::vector<std::array<Entry, max_L>>;
+    
+    AType A;
     
     size_t start_il = 0;
     
@@ -439,19 +473,19 @@ void Solve(u64 limit, size_t const L = 4) {
     
     for (size_t il = start_il; il < L; ++il) {
         u64 const block = (A.size() + nblocks - 1) / nblocks;
-        std::vector<std::future<std::tuple<std::pair<u64, u64>, std::vector<std::array<Entry, max_L>>>>> asyncs;
-        
-        std::map<u64, std::tuple<std::pair<u64, u64>, std::vector<std::array<Entry, max_L>>>> Ats;
+        std::vector<std::future<std::tuple<std::pair<u64, u64>, AType>>> asyncs;
+        std::map<u64, std::tuple<std::pair<u64, u64>, AType>> Ats;
         
         double const tb = Time();
+        double report_time = -1000;
         std::atomic<double> avg_sqrs = 0, avg_sqrs_cnt = 0;
-        u64 num_new_sols = 0;
+        u64 num_new_sols = 0, asyncs_done = 0;
         
         for (u64 iblock = 0, iblock_iter = 0; iblock < A.size(); iblock += block, ++iblock_iter) {
             u64 const cur_size = std::min<u64>(A.size() - iblock, block);
             
             asyncs.push_back(std::async(std::launch::async, [&, il, iblock, cur_size]{
-                std::vector<std::array<Entry, max_L>> At;
+                AType At;
                 if (cur_size == 0)
                     return std::make_tuple(std::pair{iblock, iblock + cur_size}, std::move(At));
                 thread_local std::vector<std::tuple<u64, u64>> sqrs0;
@@ -487,40 +521,53 @@ void Solve(u64 limit, size_t const L = 4) {
                 }
                 avg_sqrs += avg_sqrs0;
                 avg_sqrs_cnt += avg_sqrs_cnt0;
-                return std::make_tuple(std::pair{iblock, iblock + cur_size}, std::vector<std::array<Entry, max_L>>(At));
+                return std::make_tuple(std::pair{iblock, iblock + cur_size}, AType(At));
             }));
             
             while (asyncs.size() >= cpu_count * 2 ||
                     iblock + block >= A.size() && asyncs.size() > 0) {
                 for (ptrdiff_t ie = ptrdiff_t(asyncs.size()) - 1; ie >= 0; --ie) {
-                    auto & e = asyncs[ie];
+                    auto & e = asyncs.at(ie);
                     if (e.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready)
                         continue;
                     auto const r = e.get();
                     asyncs.erase(asyncs.begin() + ie);
+                    asyncs_done += 1;
                     num_new_sols += std::get<1>(r).size();
                     Ats[std::get<0>(r).first] = std::move(r);
                 }
                 std::this_thread::yield();
             }
             
-            if (((iblock_iter + 1) & ((1 << 2) - 1)) == 0 || iblock + block >= A.size()) {
+            if (asyncs_done > 0 && Time() - report_time >= 30 || iblock + block >= A.size()) {
                 double const ratio_passed = std::max<double>(1, double(iblock + cur_size) - double(asyncs.size() * block)) / A.size(),
                     ratio_left = 1.0 - ratio_passed;
-                std::cout << "L " << (il + 1) << "/" << L << ", i " << std::setfill(' ') << std::setw(6)
-                    << (iblock + cur_size) / 1'000'000 << "/" << std::fixed << std::setprecision(2) << (A.size() / 1'000'000.0)
-                    << " M, new " << std::fixed << std::setprecision(2) << (num_new_sols / 1'000'000.0) << " M, avg sqrs "
-                    << std::fixed << std::setprecision(2) << (avg_sqrs / std::max<double>(1, avg_sqrs_cnt))
-                    << std::setprecision(1) << ", ELA " << Time() / 60.0 << " mins, ETA "
-                    << std::setprecision(1) << (ratio_left / ratio_passed * (Time() - tb) / 60.0) << " mins" << std::endl;
+                if (ratio_passed >= 0.01) {
+                    u64 A2mem = 0;
+                    for (auto const & [k, v]: Ats)
+                        A2mem += u64(std::get<1>(v).capacity()) * sizeof(std::decay_t<decltype(std::get<1>(v))>::value_type);
+                    LOG << "L " << (il + 1) << "/" << L << ", i " << std::setfill(' ') << std::setw(8)
+                        << std::fixed << std::setprecision(2) << (iblock + cur_size) / 1'000'000.0 << "/"
+                        << std::fixed << std::setprecision(2) << A.size() / 1'000'000.0
+                        << " M, new " << std::fixed << std::setprecision(2) << (num_new_sols / 1'000'000.0) << " M, avg sqrs "
+                        << std::fixed << std::setprecision(2) << (avg_sqrs / std::max<double>(1, avg_sqrs_cnt))
+                        << std::setprecision(1) << ", ELA " << Time() / 60.0 << " mins, ETA "
+                        << std::setprecision(1) << (ratio_left / ratio_passed * (Time() - tb) / 60.0) << " mins, Mem [FS "
+                        << (u64(fs.capacity()) * sizeof(std::decay_t<decltype(fs)>::value_type) >> 20) << " A "
+                        << (u64(A.capacity()) * sizeof(std::decay_t<decltype(A)>::value_type) >> 20) << " A2 "
+                        << (A2mem >> 20) << "] MiB"
+                        << std::endl;
+                    report_time = Time();
+                }
             }
         }
         
         ASSERT(asyncs.empty());
         
-        A = std::vector<std::array<Entry, max_L>>();
+        A = AType();
         
-        std::vector<std::array<Entry, max_L>> A2;
+        AType A2;
+        
         u64 next = 0;
         for (auto const [k, v]: Ats) {
             ASSERT(k == next);
@@ -529,9 +576,12 @@ void Solve(u64 limit, size_t const L = 4) {
             A2.insert(A2.end(), b.begin(), b.end());
             next = a.second;
         }
-        Ats.clear();
-        A = std::move(A2);
-        std::cout << std::endl << "L " << (il + 1) << " has " << std::fixed << A.size() / 1'000'000 << "."
+        
+        Ats = std::decay_t<decltype(Ats)>();
+        A = AType(A2);
+        A2 = AType();
+        
+        LOG << std::endl << "L " << (il + 1) << " has " << std::fixed << A.size() / 1'000'000 << "."
             << std::setfill('0') << std::setw(6) << (A.size() % 1'000'000) << " M solutions" << std::endl << std::endl;
         
         if (il >= 2) {
@@ -542,7 +592,7 @@ void Solve(u64 limit, size_t const L = 4) {
                     f << e[j].x << (j + 1 >= jend ? "" : ", ");
                 f << std::endl;
             }
-            std::cout << "Solutions for L=" << (il + 1) << " saved to '" << FName(il + 1) << "'" << std::endl;
+            LOG << "Solutions for L=" << (il + 1) << " saved to '" << FName(il + 1) << "'" << std::endl;
         }
     }
 }
@@ -561,7 +611,7 @@ void Test() {
     Timing tim("Test");
     for (int i = 0; i < iend; ++i) {
         if (i - report_i >= iend / 10) {
-            std::cout << "test " << i << ", " << std::flush;
+            LOG << "test " << i << ", " << std::flush;
             report_i = i;
         }
         auto const N = distr(rng);
@@ -581,30 +631,19 @@ void Test() {
         ASSERT_MSG(sqrs0 == sqrs1, "N " + std::to_string(N) +
             ", sqrs0 " + ToStr(sqrs0) + ", sqrs1 " + ToStr(sqrs1));
     }
-    return;
-    
-    #if 0
-    double tb = Time();
-    for (size_t N = 1; N < fs.size(); ++N) {
-        if (N % 5'000'000 == 0 || N + 1 >= fs.size()) {
-            std::cout << N / 1'000'000 << " M (avg " << std::fixed << std::setprecision(2)
-                << sqrs_sum / std::max<double>(1, sqrs_cnt) << ", time "
-                << (Time() - tb) << " sec), " << std::flush;
-        }
-        sqrs.clear();
-        FindSquares(N, true, fs, sqrs);
-        sqrs_sum += sqrs.size();
-        sqrs_cnt += 1;
-    }
-    #endif
 }
 
 int main() {
     try {
         //Test(); return 0;
-        //Solve((1ULL << 32) - 2);
-        Solve(1ULL << 28);
+        //Solve(1ULL << 22);
+        Solve((1ULL << 32) - 2);
+
+        LogFile().close();
+        return 0;
     } catch (std::exception const & ex) {
-        std::cout << "Exception: " << ex.what() << std::endl;
+        LOG << "Exception: " << ex.what() << std::endl;
+        LogFile().close();
+        return -1;
     }
 }

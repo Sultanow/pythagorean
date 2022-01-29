@@ -10,24 +10,24 @@ sudo apt install g++-11
 
 install clang13
 
-```bash
+```console
 bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
 ```
 
 compile
 
-```bash
+```console
 g++-11 -std=c++20 -O3 -m64 prog.cpp -o prog -lpthread
 ```
 
 or
 
-```bash
+```console
 clang-13 -std=c++20 -O3 -m64 prog.cpp -o prog -lpthread
 ```
 
 run it
 
-```bash
+```console
 ./prog
 ```

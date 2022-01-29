@@ -10,7 +10,7 @@ sudo apt update
 sudo apt install g++-11
 ```
 
-install clang13
+install clang13 (possibly a `sudo apt install lsb-release wget software-properties-common` is required before)
 
 ```console
 sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"

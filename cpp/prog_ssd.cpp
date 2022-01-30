@@ -424,10 +424,10 @@ template <typename T>
 std::string NumToStr(T x) {
     std::stringstream ss;
     auto constexpr mod = 1'000'000'000'000'000'000ULL;
-    auto const hi = x / mod;
+    auto const hi = u64(x / mod);
     if (hi > 0)
         ss << hi;
-    ss << (x % mod);
+    ss << u64(x % mod);
     return ss.str();
 }
 

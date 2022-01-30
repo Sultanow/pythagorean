@@ -58,8 +58,8 @@ run it using:
 clang-13 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
 
-For searches bigger than `2^32` we need 128 Bit calculations. In this case we need to set `IS_128` to `1`:
+For searches bigger than `2^32` we need 128 Bit calculations. In this case we need to switch `IS_128` from `0` to `1`:
 
 ```cpp
-#define IS_128 0
+#define IS_128 1
 ```

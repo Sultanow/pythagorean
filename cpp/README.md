@@ -1,4 +1,4 @@
-###Arty's programm to search pythagorean triples and quadruples
+## Arty's programm to search pythagorean triples and quadruples
 
 On an Ubuntu machine do the following:
 
@@ -34,7 +34,6 @@ run it
 ./prog
 ```
 
-
 ## Version for larger ranges
 
 Arty's new version `prog_ssd.cpp` allows for larger ranges as it uses additionally SSD memory.
@@ -63,3 +62,7 @@ For searches bigger than `2^32` we need 128 Bit calculations. In this case we ne
 ```cpp
 #define IS_128 1
 ```
+
+## Explaining the limit definition
+Limit is value of last element of tuple. If the limit is 1000 then `0 < w < x < y < z < 1000`.
+Therefore `Solve(1 << 29)` defines a search in the range `0 < w < x < y < z < (1 << 29)`.

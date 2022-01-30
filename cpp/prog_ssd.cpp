@@ -22,9 +22,9 @@
 #include <atomic>
 #include <mutex>
 
-#define LIMIT (1ULL << 32)
-#define IS_128 0
-#define MBLOCK (1ULL << 29)
+#define LIMIT (1ULL << 34)
+#define IS_128 1
+#define MBLOCK (1ULL << 27)
 
 #define SUPPORT_ZSTD 1
 #define ZSTD_COMPRESSION_LEVEL 3

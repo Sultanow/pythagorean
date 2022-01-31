@@ -9,7 +9,10 @@ sudo apt update
 sudo apt install software-properties-common
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 sudo apt update
+sudo apt upgrade
 sudo apt install g++-11
+sudo apt install libc6
+sudo apt upgrade libstdc++6
 ```
 
 install clang13 (possibly a `sudo apt install lsb-release wget software-properties-common` is required before)
@@ -58,6 +61,8 @@ run it using:
 ```console
 clang-13 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
+
+If sudo is needed `apt install sudo` followed by `sudo bash`.
 
 For searches bigger than `2^32` we need 128 Bit calculations. In this case we need to switch `IS_128` from `0` to `1`:
 

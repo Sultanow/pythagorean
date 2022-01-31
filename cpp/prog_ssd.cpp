@@ -22,14 +22,14 @@
 #include <atomic>
 #include <mutex>
 
-#define LIMIT (1ULL << 35)
+#define LIMIT (1ULL << 27)
 #define IS_128 1
-#define MBLOCK (1ULL << 27)
+#define MBLOCK (1ULL << 23)
 
 #define SUPPORT_ZSTD 1
-#define ZSTD_COMPRESSION_LEVEL 4
+#define ZSTD_COMPRESSION_LEVEL 5
 
-#define SUPPORT_POLLARD_RHO 1
+#define SUPPORT_POLLARD_RHO 0
 
 #if SUPPORT_ZSTD
     #include <zstd.h>
@@ -107,6 +107,36 @@ public:
     bool Get(u64 i) const {
         return (bytes_[i / 8] >> (i % 8)) & u8(1);
     }
+    u64 GetWord(u8 cnt, u64 off) const {
+        return ((*(u64*)&bytes_[off / 8]) >> (off % 8)) & ((1ULL << cnt) - 1);
+    }
+    void SetWord(u8 cnt, u64 off, u64 word) {
+        auto e = *(u64*)&bytes_[off / 8];
+        e &= ~(((1ULL << cnt) - 1) << (off % 8));
+        word &= (1ULL << cnt) - 1;
+        word <<= off % 8;
+        e |= word;
+        *(u64*)&bytes_[off / 8] = e;
+    }
+    void SetVecElemSize(size_t cnt) {
+        ASSERT_MSG(cnt <= 56, std::to_string(cnt));
+        vec_el_size_ = u8(cnt);
+    }
+    u64 GetVec(u64 idx) const {
+        return GetWord(vec_el_size_, idx * vec_el_size_);
+    }
+    u64 GetVecCh(u64 idx) const {
+        ASSERT(idx < vec_size_);
+        return GetVec(idx);
+    }
+    void SetVec(u64 idx, u64 word) {
+        SetWord(vec_el_size_, idx * vec_el_size_, word);
+    }
+    void SetVecCh(u64 idx, u64 word) {
+        ASSERT(idx < vec_size_);
+        ASSERT(word < (1ULL << vec_el_size_));
+        SetVec(idx, word);
+    }
     void Set(u64 i) {
         bytes_[i / 8] |= u8(1) << (i % 8);
     }
@@ -115,11 +145,22 @@ public:
     }
     void Resize(u64 size) {
         size_ = size;
-        bytes_.resize((size_ + 7) / 8);
+        bytes_.resize((size_ + 63) / 64 * 8);
+    }
+    void ResizeVec(u64 size) {
+        ASSERT(vec_el_size_ > 0);
+        Resize(size * vec_el_size_);
+        vec_size_ = size;
     }
     u64 Size() const { return size_; }
+    u64 SizeVec() const { return vec_size_; }
+    u8 VecElemSize() const { return vec_el_size_; }
+    std::vector<u8> & Bytes() { return bytes_; }
+    std::vector<u8> const & Bytes() const { return bytes_; }
+    
 private:
-    u64 size_ = 0;
+    u64 size_ = 0, vec_size_ = 0;
+    u8 vec_el_size_ = 0;
     std::vector<u8> bytes_;
 };
 
@@ -311,41 +352,6 @@ void CreateLoadPrimes(size_t const bits, std::vector<T> & ps) {
     ASSERT_MSG(sum == ref_sum, "sum " + std::to_string(sum) + ", ref_sum " + std::to_string(ref_sum));
 }
 
-void FactorRange(u64 const limit, std::vector<u32> & fs) {
-    fs = std::decay_t<decltype(fs)>();
-    fs.resize((limit + 1) / 2);
-    std::vector<u32> ps;
-    {
-        auto const p_bits = size_t(std::log2(std::max<double>(1, std::sqrt(fs.size()))) + 1);
-        Timing tim("Generate " + std::to_string(p_bits) + "-bit primes");
-        CreateLoadPrimes(16, ps);
-    }
-    Timing tim("Factor Range calc total");
-    double report_time = -1000, tb = Time();
-    if (!fs.empty())
-        fs.at(0) = 1;
-    u64 ip = 0;
-    for (auto const p: ps) {
-        if (p == 2)
-            continue;
-        for (u64 i = p; i < fs.size() * 2; i += p * 2) {
-            auto & e = fs[i >> 1];
-            if (e == 0)
-                e = p;
-        }
-        if ((ip & 0xFF) == 0 && Time() - report_time >= 30) {
-            LOG << "Factor range calc " << std::setfill(' ') << std::setw(std::to_string(ps.size() >> 10).size())
-                << (ip >> 10) << "/" << (ps.size() >> 10) << " K, ELA "
-                << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
-            report_time = Time();
-        }
-        ++ip;
-    }
-    for (auto & e: fs)
-        if (e == 0)
-            e = 1;
-}
-
 template <typename T>
 std::string NumToStr(T x) {
     std::stringstream ss;
@@ -355,118 +361,6 @@ std::string NumToStr(T x) {
         ss << hi;
     ss << u64(x % mod);
     return ss.str();
-}
-
-#if SUPPORT_POLLARD_RHO
-void FactorPollardRho(u64 N, std::vector<u64> & factors);
-#endif
-
-void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, std::vector<std::tuple<u64, u64>> & sqrs, u64 limit = (u64(-1) >> 1), bool pollard_rho = false) {
-    thread_local std::vector<std::tuple<u64, u16>> fc0;
-    auto & fc = fc0;
-    fc.clear();
-    
-    ASSERT(limit <= (u64(-1) >> 1));
-    ASSERT(should_square);
-    ASSERT_MSG(N0 <= WordT(-1), "Probably 128-bit is not enabled!");
-    
-    //if (should_square) ASSERT(N0 <= u32(-1));
-    DWordT const N = should_square ? DWordT(N0) * N0 : N0;
-    
-    auto FindCnts = [&](u64 x){
-        ASSERT_MSG(x > 0 && (x >> 1) < fs.size(),
-            "x " + std::to_string(x) + " fs.size() " + std::to_string(fs.size()));
-        while (x > 1) {
-            u64 p = 0;
-            if ((x & 1) == 0)
-                p = 2;
-            else {
-                auto const fsx = fs[x >> 1];
-                p = fsx == 1 ? x : fsx;
-                ASSERT(p > 1);
-                //ASSERT(x % p == 0);
-            }
-            bool found = false;
-            for (auto & [k, v]: fc)
-                if (k == p) {
-                    found = true;
-                    ++v;
-                    break;
-                }
-            if (!found)
-                fc.push_back(std::make_tuple(p, 1));
-            x /= p;
-        }
-    };
-    
-    auto FindCntsPollardRho = [&](u64 x) {
-        #if SUPPORT_POLLARD_RHO
-            thread_local std::vector<u64> fs0;
-            auto & fs = fs0;
-            fs.clear();
-            FactorPollardRho(x, fs);
-            std::sort(fs.begin(), fs.end());
-            u64 m = 1;
-            for (auto const & f: fs) {
-                m *= f;
-                bool found = false;
-                for (auto & [k, v]: fc)
-                    if (k == f) {
-                        ++v;
-                        found = true;
-                        break;
-                    }
-                if (!found)
-                    fc.push_back(std::make_tuple(f, 1));
-            }
-            ASSERT_MSG(m == x, "m " + std::to_string(m) + " x " + std::to_string(x));
-        #else
-            ASSERT_MSG(false, "FindSquares: Pollard-Rho compilation is disabled!");
-        #endif
-    };
-    
-    if (!pollard_rho)
-        FindCnts(N0);
-    else
-        FindCntsPollardRho(N0);
-    
-    if (should_square)
-        for (auto & [k, v]: fc)
-            v *= 2;
-    
-    sqrs.clear();
-    
-    std::function<void(size_t, DWordT)> Iter = [&](size_t i, DWordT B){
-        if (i >= fc.size()) {
-            if (B > DWordT(u64(-1)))
-                return;
-            u64 const B64 = u64(B);
-            DWordT const A = N / B64;
-            ASSERT_MSG(A * B64 == N, "A " + NumToStr(A) + " B64 " +
-                NumToStr(B) + " N " + NumToStr(N) + " N0 " + std::to_string(N0));
-            if (A < B)
-                return;
-            ASSERT(((A - B64) & 1) == 0);
-            DWordT const X = (A + B64) >> 1;
-            if (X >= DWordT(limit))
-                return;
-            DWordT const Y = (A - B64) >> 1;
-            if (Y == 0)
-                return;
-            ASSERT(N + DWordT(u64(Y)) * u64(Y) == DWordT(u64(X)) * u64(X));
-            sqrs.push_back(std::make_tuple(u64(Y), u64(X)));
-            return;
-        }
-        auto const [f, c] = fc[i];
-        if (f == 2)
-            B *= 2;
-        for (size_t j = (f == 2 ? 1 : 0); j <= (f == 2 ? c - 1 : c); ++j) {
-            Iter(i + 1, B);
-            B *= f;
-        }
-    };
-    
-    Iter(0, 1);
 }
 
 template <typename T, typename DT>
@@ -693,6 +587,10 @@ public:
     void Write(T const * ptr, size_t size) {
         WriteB((u8*)ptr, size * sizeof(T));
     }
+    template <typename T>
+    void Write(T const & obj) {
+        Write(&obj, 1);
+    }
     void WriteB(u8 const * ptr, size_t size) {
         while (size > 0) {
             u64 const port = std::min<u64>(buf_size - buf_.size(), size);
@@ -757,6 +655,10 @@ public:
         ASSERT(f_.is_open());
     }
     template <typename T>
+    void Read(T & obj) {
+        ASSERT(Read(&obj, 1) == 1);
+    }
+    template <typename T>
     size_t Read(T * ptr, size_t size) {
         size_t const readed = filt_.Read((u8*)ptr, size * sizeof(T));
         ASSERT(readed % sizeof(T) == 0);
@@ -779,60 +681,301 @@ private:
     Filter filt_;
 };
 
-void FactorRangeCreateLoad(u64 const limit, std::vector<u32> & fs) {
-    size_t constexpr compr_level = 5;
+class FactorRangeC {
+public:
+    using PrimoT = u16;
     
-    fs = std::decay_t<decltype(fs)>();
-    std::string fname = "factor_range." + std::to_string(limit) + ".zst";
-    if (!std::filesystem::exists(fname)) {
-        std::vector<u32> fs0;
-        FactorRange(limit, fs0);
-        FileSeqWriter fw(fname, compr_level);
-        Timing tim("Factor Range write total (<ERROR> compressed-MiB)");
-        RunInDestr tim_set_name([&]{
-            tim.SetName("Factor Range write total (" + std::to_string(fw.Size() >> 20) + " compressed-MiB)");
-        });
-        double report_time = Time() - 20, tb = Time();
-        u64 const block = 1 << 26;
-        for (u64 i = 0; i < fs0.size(); i += block) {
-            u64 const port = std::min<u64>(block, fs0.size() - i);
-            fw.Write(fs0.data() + i, port);
-            if (Time() - report_time >= 30) {
-                LOG << "Factor range zstd write " << std::setfill(' ') << std::setw(std::to_string(fs0.size() >> 20).size())
-                    << (i >> 20) << "/" << (fs0.size() >> 20) << " M, ELA "
-                    << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
-                report_time = Time();
+    void Create(u64 const limit0) {
+        std::vector<PrimoT> const primo_ps = {2, 3, 5, 7, 11, 13};
+        primo_ = 1;
+        for (auto e: primo_ps)
+            primo_ *= e;
+        primo_idxs_.clear();
+        primo_idxs_.resize(primo_);
+        PrimoT non_div = 0;
+        for (PrimoT i = 0; i < primo_idxs_.size(); ++i) {
+            PrimoT divis = 0;
+            for (auto e: primo_ps)
+                if (i % e == 0) {
+                    divis = e;
+                    break;
+                }
+            if (divis != 0)
+                primo_idxs_[i] = divis;
+            else {
+                primo_idxs_[i] = non_div + 256;
+                ++non_div;
             }
         }
-        fw.Flush();
-    }
-    {
-        FileSeqReader fr(fname);
-        Timing tim("Factor Range read total (<ERROR> compressed-MiB)");
-        RunInDestr tim_set_name([&]{
-            tim.SetName("Factor Range read total (" + std::to_string(fr.Size() >> 20) + " compressed-MiB)");
-        });
-        std::decay_t<decltype(fs)> buf;
-        double report_time = Time() - 20, tb = Time();
-        while (true) {
-            buf.clear();
-            buf.resize(1 << 25);
-            size_t const readed = fr.Read(buf.data(), buf.size());
-            ASSERT(readed <= buf.size());
-            bool const last = readed < buf.size();
-            buf.resize(readed);
-            fs.insert(fs.end(), buf.begin(), buf.end());
-            if (Time() - report_time >= 30) {
-                LOG << "Factor range zstd read " << std::setfill(' ') << std::setw(std::to_string(fr.Size() >> 20).size())
-                    << (fr.CReaded() >> 20) << "/" << (fr.Size() >> 20) << " MiB, ELA "
-                    << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
-                report_time = Time();
-            }
-            if (last)
+        primo_cnt_ = non_div;
+
+        ASSERT(fs_.Size() == 0);
+        
+        u64 const limit_primo_cnt = (limit0 + primo_ - 1) / primo_, limit_ceil = limit_primo_cnt * primo_;
+        p_bits_ = size_t(std::log2(std::max<double>(1, std::sqrt(double(limit_ceil)))) + 1);;
+        
+        ps_.clear();
+        
+        {
+            Timing tim("Generate " + std::to_string(p_bits_) + "-bit primes");
+            CreateLoadPrimes(p_bits_, ps_);
+        }
+        
+        fs_.SetVecElemSize(size_t(std::log2(double(ps_.size())) + 1));
+        fs_.ResizeVec(limit_primo_cnt * primo_cnt_);
+        
+        Timing tim("Factor Range calc total");
+        double report_time = Time() - 10, tb = Time();
+        u64 ip = 0;
+        size_t start_ips = 0;
+        for (;; ++start_ips)
+            if (ps_.at(start_ips) > primo_ps.back())
                 break;
+        for (size_t ip = start_ips; ip < ps_.size(); ++ip) {
+            auto const p = ps_[ip];
+            for (u64 i = p; i < limit_ceil; i += p) {
+                PrimoT const i_primo = PrimoT(i % primo_);
+                if (primo_idxs_[i_primo] < 256)
+                    continue;
+                /*
+                ASSERT_MSG(primo_idxs_.at(i_primo) >= 256, "p " + std::to_string(p) + " primo " +
+                    std::to_string(primo_) + " i " + std::to_string(i) + " i_primo " + std::to_string(i_primo) +
+                    " primo_idx " + std::to_string(primo_idxs_.at(i_primo)));
+                */
+                u64 const idx = i / primo_ * primo_cnt_ + (primo_idxs_[i_primo] - 256);
+                if (fs_.GetVecCh(idx) != 0)
+                    continue;
+                fs_.SetVecCh(idx, ip);
+            }
+            if ((ip & 0xFF) == 0 && Time() - report_time >= 30) {
+                LOG << "Factor range calc " << std::setfill(' ') << std::setw(std::to_string(ps_.size() >> 10).size())
+                    << (ip >> 10) << "/" << (ps_.size() >> 10) << " K, ELA "
+                    << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
+                report_time = Time();
+            }
         }
-        ASSERT(fs.size() == (limit + 1) / 2);
+        /*
+        for (u64 i = 0; i < fs_.SizeVec(); ++i)
+            if (fs_.GetVecCh(i) == 0)
+                for (size_t j = 0; j < primo_idxs_.size(); ++j)
+                    if (primo_idxs_[j] == i % primo_cnt_)
+                        ASSERT_MSG(fs_.GetVecCh(i) != 0, "i " + std::to_string(i) + " num " + std::to_string(i / primo_cnt_ * primo_ + j));
+        */
     }
+    
+    void CreateLoad(u64 const limit) {
+        size_t constexpr compr_level = 7;
+        ASSERT(fs_.Size() == 0 && ps_.size() == 0);
+        std::string const fname = "factor_range.v2." + std::to_string(limit) + ".zst";
+        if (!std::filesystem::exists(fname)) {
+            Create(limit);
+            FileSeqWriter fw(fname, compr_level);
+            Timing tim("Factor Range write total (<ERROR> compressed-MiB)");
+            RunInDestr tim_set_name([&]{
+                tim.SetName("Factor Range write total (" + std::to_string(fw.Size() >> 20) + " compressed-MiB)");
+            });
+            
+            fw.Write(primo_);
+            fw.Write(primo_cnt_);
+            fw.Write(p_bits_);
+            fw.Write(ps_.size());
+            fw.Write(ps_.back());
+            fw.Write(primo_idxs_.size());
+            fw.Write(primo_idxs_.data(), primo_idxs_.size());
+            fw.Write(fs_.VecElemSize());
+            fw.Write(fs_.SizeVec());
+            
+            double report_time = Time() - 20, tb = Time();
+            u64 const block = 1ULL << 27;
+            for (u64 i = 0; i < fs_.Bytes().size(); i += block) {
+                u64 const port = std::min<u64>(block, fs_.Bytes().size() - i);
+                fw.Write(fs_.Bytes().data() + i, port);
+                if (Time() - report_time >= 30) {
+                    LOG << "Factor range zstd write " << std::setfill(' ') << std::setw(std::to_string(fs_.Bytes().size() >> 20).size())
+                        << (i >> 20) << "/" << (fs_.Bytes().size() >> 20) << " MiB, ELA "
+                        << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
+                    report_time = Time();
+                }
+            }
+            
+            fw.Flush();
+        }
+        size_t num_ps = 0;
+        u32 last_ps = 0;
+        {
+            FileSeqReader fr(fname);
+            Timing tim("Factor Range read total (<ERROR> compressed-MiB)");
+            RunInDestr tim_set_name([&]{
+                tim.SetName("Factor Range read total (" + std::to_string(fr.Size() >> 20) + " compressed-MiB)");
+            });
+            
+            fr.Read(primo_);
+            fr.Read(primo_cnt_);
+            fr.Read(p_bits_);
+            fr.Read(num_ps);
+            fr.Read(last_ps);
+            { size_t t = 0; fr.Read(t); primo_idxs_.resize(t); }
+            fr.Read(primo_idxs_.data(), primo_idxs_.size());
+            { u8 t = 0; fr.Read(t); fs_.SetVecElemSize(t); }
+            { size_t t = 0; fr.Read(t); fs_.ResizeVec(t); }
+            
+            std::vector<u8> buf;
+            double report_time = Time() - 20, tb = Time();
+            u64 const block = 1ULL << 27;
+            for (u64 i = 0; i < fs_.Bytes().size(); i += block) {
+                u64 const cur_block = std::min<u64>(block, fs_.Bytes().size() - i);
+                buf.clear();
+                buf.resize(cur_block);
+                size_t const readed = fr.Read(buf.data(), buf.size());
+                ASSERT(readed == buf.size());
+                std::memcpy(fs_.Bytes().data() + i, buf.data(), buf.size());
+                if (Time() - report_time >= 30) {
+                    LOG << "Factor range zstd read " << std::setfill(' ') << std::setw(std::to_string(fr.Size() >> 20).size())
+                        << (fr.CReaded() >> 20) << "/" << (fr.Size() >> 20) << " compressed-MiB, ELA "
+                        << std::fixed << std::setprecision(1) << (Time() - tb) / 60.0 << " mins" << std::endl;
+                    report_time = Time();
+                }
+            }
+        }
+        {
+            Timing tim("Generate " + std::to_string(p_bits_) + "-bit primes");
+            CreateLoadPrimes(p_bits_, ps_);
+            ASSERT(ps_.size() == num_ps);
+            ASSERT(ps_.back() == last_ps);
+        }
+    }
+    
+    void FindCnts(u64 x, std::vector<std::tuple<u64, u16>> & fc) const {
+        fc.clear();
+        while (x > 1) {
+            u64 p = 0;
+            if ((x & 1) == 0)
+                p = 2;
+            else {
+                auto const primo_rem = PrimoT(x % primo_);
+                auto const idx = primo_idxs_[primo_rem];
+                if (idx < 256)
+                    p = idx;
+                else {
+                    auto const val = fs_.GetVecCh(x / primo_ * primo_cnt_ + (idx - 256));
+                    if (val == 0)
+                        p = x;
+                    else
+                        p = ps_.at(val);
+                }
+            }
+            bool found = false;
+            for (auto & [k, v]: fc)
+                if (k == p) {
+                    found = true;
+                    ++v;
+                    break;
+                }
+            if (!found)
+                fc.push_back(std::make_tuple(p, 1));
+            ASSERT(p > 1);
+            ASSERT(x % p == 0);
+            x /= p;
+        }
+    }
+
+    u64 Mem() const {
+        return primo_idxs_.capacity() * sizeof(std::decay_t<decltype(primo_idxs_)>::value_type) +
+            fs_.Bytes().capacity() + ps_.capacity() * sizeof(std::decay_t<decltype(ps_)>::value_type);
+    }
+    
+private:
+    PrimoT primo_ = 0, primo_cnt_ = 0;
+    size_t p_bits_ = 0;
+    std::vector<PrimoT> primo_idxs_;
+    BitVector fs_;
+    std::vector<u32> ps_;
+};
+
+#if SUPPORT_POLLARD_RHO
+void FactorPollardRho(u64 N, std::vector<u64> & factors);
+#endif
+
+void FindSquares(u64 const N0, bool should_square, FactorRangeC const & frc, std::vector<std::tuple<u64, u64>> & sqrs, u64 limit = (u64(-1) >> 1), bool pollard_rho = false) {
+    thread_local std::vector<std::tuple<u64, u16>> fc0;
+    auto & fc = fc0;
+    fc.clear();
+    
+    ASSERT(limit <= (u64(-1) >> 1));
+    ASSERT(should_square);
+    ASSERT_MSG(N0 <= WordT(-1), "Probably 128-bit is not enabled!");
+    
+    //if (should_square) ASSERT(N0 <= u32(-1));
+    DWordT const N = should_square ? DWordT(N0) * N0 : N0;
+
+    auto FindCntsPollardRho = [&](u64 x) {
+        #if SUPPORT_POLLARD_RHO
+            thread_local std::vector<u64> facts0;
+            auto & facts = facts0;
+            facts.clear();
+            FactorPollardRho(x, facts);
+            std::sort(facts.begin(), facts.end());
+            u64 m = 1;
+            for (auto const & f: facts) {
+                m *= f;
+                bool found = false;
+                for (auto & [k, v]: fc)
+                    if (k == f) {
+                        ++v;
+                        found = true;
+                        break;
+                    }
+                if (!found)
+                    fc.push_back(std::make_tuple(f, 1));
+            }
+            ASSERT_MSG(m == x, "m " + std::to_string(m) + " x " + std::to_string(x));
+        #else
+            ASSERT_MSG(false, "FindSquares: Pollard-Rho compilation is disabled!");
+        #endif
+    };
+    
+    if (!pollard_rho)
+        frc.FindCnts(N0, fc);
+    else
+        FindCntsPollardRho(N0);
+    
+    if (should_square)
+        for (auto & [k, v]: fc)
+            v *= 2;
+    
+    sqrs.clear();
+    
+    std::function<void(size_t, DWordT)> Iter = [&](size_t i, DWordT B){
+        if (i >= fc.size()) {
+            if (B > DWordT(u64(-1)))
+                return;
+            u64 const B64 = u64(B);
+            DWordT const A = N / B64;
+            ASSERT_MSG(A * B64 == N, "A " + NumToStr(A) + " B64 " +
+                NumToStr(B) + " N " + NumToStr(N) + " N0 " + std::to_string(N0));
+            if (A < B)
+                return;
+            ASSERT(((A - B64) & 1) == 0);
+            DWordT const X = (A + B64) >> 1;
+            if (X >= DWordT(limit))
+                return;
+            DWordT const Y = (A - B64) >> 1;
+            if (Y == 0)
+                return;
+            ASSERT(N + DWordT(u64(Y)) * u64(Y) == DWordT(u64(X)) * u64(X));
+            sqrs.push_back(std::make_tuple(u64(Y), u64(X)));
+            return;
+        }
+        auto const [f, c] = fc[i];
+        if (f == 2)
+            B *= 2;
+        for (size_t j = (f == 2 ? 1 : 0); j <= (f == 2 ? c - 1 : c); ++j) {
+            Iter(i + 1, B);
+            B *= f;
+        }
+    };
+    
+    Iter(0, 1);
 }
 
 void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size_t const L = 4) {
@@ -857,8 +1000,8 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
     
     ASSERT(first_begin <= first_end && first_end <= limit);
     
-    std::vector<u32> fs;
-    FactorRangeCreateLoad(limit, fs);
+    FactorRangeC frc;
+    frc.CreateLoad(limit);
     
     auto FName = [&](size_t l) {
         return "cpp_solutions." + std::to_string(l) + "." + std::to_string(limit) +
@@ -937,7 +1080,7 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
                     double avg_sqrs0 = 0, avg_sqrs_cnt0 = 0;
                     for (u64 i = iblock; i < iblock + cur_size; ++i) {
                         sqrs.clear();
-                        FindSquares(A[i][il - 1].x, true, fs, sqrs, limit);
+                        FindSquares(A[i][il - 1].x, true, frc, sqrs, limit);
                         std::sort(sqrs.begin(), sqrs.end());
                         avg_sqrs0 += sqrs.size();
                         avg_sqrs_cnt0 += 1;
@@ -998,7 +1141,7 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
                         << std::fixed << std::setprecision(2) << (avg_sqrs / std::max<double>(1, avg_sqrs_cnt))
                         << std::setprecision(1) << ", ELA " << (Time() - tb) / 60.0 << " mins, ETA "
                         << std::setprecision(1) << (ratio_left / ratio_passed * (Time() - tb) / 60.0) << " mins, Mem [FS "
-                        << (u64(fs.capacity()) * sizeof(std::decay_t<decltype(fs)>::value_type) >> 20) << " A "
+                        << (frc.Mem() >> 20) << " A "
                         << (u64(A.capacity()) * sizeof(std::decay_t<decltype(A)>::value_type) >> 20) << " A2 "
                         << (A2mem >> 20) << "] MiB"
                         << std::endl;
@@ -1043,12 +1186,24 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
             Ats = std::decay_t<decltype(Ats)>();
             
             if (l >= save_l_start) {
-                std::ofstream f(FName(l), std::ios::app);
-                for (auto e: A2) {
-                    size_t const jend = il + 1;
-                    for (size_t j = 0; j < jend; ++j)
-                        f << e[j].x << (j + 1 >= jend ? "" : ", ");
-                    f << std::endl;
+                {
+                    Timing tim("Saving results to file '" + FName(l) + "'");
+                    std::ofstream f(FName(l), std::ios::app);
+                    for (auto const & e: A2) {
+                        size_t const jend = il + 1;
+                        for (size_t j = 0; j < jend; ++j)
+                            f << e[j].x << (j + 1 >= jend ? "" : ", ");
+                        f << std::endl;
+                    }
+                }
+                {
+                    Timing tim("Checking tuples correctness");
+                    for (auto const & e: A2)
+                        for (size_t jl = 0; jl <= il; ++jl) {
+                            ASSERT(std::get<0>(IsSquare<DWordT>(DWordT(e[jl].x) * e[jl].x)));
+                            for (size_t kl = 0; kl < jl; ++kl)
+                                ASSERT(std::get<0>(IsSquare<DWordT>(DWordT(e[jl].x) * e[jl].x - DWordT(e[kl].x) * e[kl].x)));
+                        }
                 }
             }
         }
@@ -1064,8 +1219,9 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
 void Test() {
     u64 const limit = 1ULL << 11;
     
-    std::vector<u32> fs;
-    FactorRange(limit, fs);
+    FactorRangeC frc;
+    frc.CreateLoad(limit);
+    
     double sqrs_sum = 0, sqrs_cnt = 0;
     std::vector<std::tuple<u64, u64>> sqrs0, sqrs1;
     std::mt19937_64 rng{std::random_device{}()};
@@ -1080,7 +1236,7 @@ void Test() {
         }
         auto const N = distr(rng);
         sqrs0.clear();
-        FindSquares(N, true, fs, sqrs0);
+        FindSquares(N, true, frc, sqrs0);
         std::sort(sqrs0.begin(), sqrs0.end());
         sqrs1.clear();
         FindSquaresSlow(N * N, sqrs1);

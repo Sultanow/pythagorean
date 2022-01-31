@@ -15,9 +15,10 @@ sudo apt install libc6
 sudo apt upgrade libstdc++6
 ```
 
-install clang13 (possibly a `sudo apt install lsb-release wget software-properties-common` is required before)
+install clang13:
 
 ```console
+sudo apt install lsb-release wget software-properties-common
 sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
 ```
 

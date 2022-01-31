@@ -22,13 +22,14 @@
 #include <atomic>
 #include <mutex>
 
-#define LIMIT (1ULL << 34)
+#define LIMIT (1ULL << 35)
 #define IS_128 1
 #define MBLOCK (1ULL << 27)
 
 #define SUPPORT_ZSTD 1
-#define ZSTD_COMPRESSION_LEVEL 3
-#define ZSTD_NUM_THREADS 0
+#define ZSTD_COMPRESSION_LEVEL 4
+
+#define SUPPORT_POLLARD_RHO 1
 
 #if SUPPORT_ZSTD
     #include <zstd.h>
@@ -345,13 +346,29 @@ void FactorRange(u64 const limit, std::vector<u32> & fs) {
             e = 1;
 }
 
-void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, std::vector<std::tuple<u64, u64>> & sqrs, u64 limit = (u64(-1) >> 1)) {
+template <typename T>
+std::string NumToStr(T x) {
+    std::stringstream ss;
+    auto constexpr mod = 1'000'000'000'000'000'000ULL;
+    auto const hi = u64(x / mod);
+    if (hi > 0)
+        ss << hi;
+    ss << u64(x % mod);
+    return ss.str();
+}
+
+#if SUPPORT_POLLARD_RHO
+void FactorPollardRho(u64 N, std::vector<u64> & factors);
+#endif
+
+void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, std::vector<std::tuple<u64, u64>> & sqrs, u64 limit = (u64(-1) >> 1), bool pollard_rho = false) {
     thread_local std::vector<std::tuple<u64, u16>> fc0;
     auto & fc = fc0;
     fc.clear();
-
+    
     ASSERT(limit <= (u64(-1) >> 1));
     ASSERT(should_square);
+    ASSERT_MSG(N0 <= WordT(-1), "Probably 128-bit is not enabled!");
     
     //if (should_square) ASSERT(N0 <= u32(-1));
     DWordT const N = should_square ? DWordT(N0) * N0 : N0;
@@ -382,21 +399,51 @@ void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, 
         }
     };
     
-    FindCnts(N0);
+    auto FindCntsPollardRho = [&](u64 x) {
+        #if SUPPORT_POLLARD_RHO
+            thread_local std::vector<u64> fs0;
+            auto & fs = fs0;
+            fs.clear();
+            FactorPollardRho(x, fs);
+            std::sort(fs.begin(), fs.end());
+            u64 m = 1;
+            for (auto const & f: fs) {
+                m *= f;
+                bool found = false;
+                for (auto & [k, v]: fc)
+                    if (k == f) {
+                        ++v;
+                        found = true;
+                        break;
+                    }
+                if (!found)
+                    fc.push_back(std::make_tuple(f, 1));
+            }
+            ASSERT_MSG(m == x, "m " + std::to_string(m) + " x " + std::to_string(x));
+        #else
+            ASSERT_MSG(false, "FindSquares: Pollard-Rho compilation is disabled!");
+        #endif
+    };
+    
+    if (!pollard_rho)
+        FindCnts(N0);
+    else
+        FindCntsPollardRho(N0);
     
     if (should_square)
         for (auto & [k, v]: fc)
             v *= 2;
-            
+    
     sqrs.clear();
     
-    std::function<void(size_t, u64)> Iter = [&](size_t i, DWordT B){
+    std::function<void(size_t, DWordT)> Iter = [&](size_t i, DWordT B){
         if (i >= fc.size()) {
             if (B > DWordT(u64(-1)))
                 return;
             u64 const B64 = u64(B);
             DWordT const A = N / B64;
-            ASSERT(A * B64 == N);
+            ASSERT_MSG(A * B64 == N, "A " + NumToStr(A) + " B64 " +
+                NumToStr(B) + " N " + NumToStr(N) + " N0 " + std::to_string(N0));
             if (A < B)
                 return;
             ASSERT(((A - B64) & 1) == 0);
@@ -404,13 +451,15 @@ void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, 
             if (X >= DWordT(limit))
                 return;
             DWordT const Y = (A - B64) >> 1;
+            if (Y == 0)
+                return;
             ASSERT(N + DWordT(u64(Y)) * u64(Y) == DWordT(u64(X)) * u64(X));
             sqrs.push_back(std::make_tuple(u64(Y), u64(X)));
             return;
         }
         auto const [f, c] = fc[i];
         if (f == 2)
-            B *= f;
+            B *= 2;
         for (size_t j = (f == 2 ? 1 : 0); j <= (f == 2 ? c - 1 : c); ++j) {
             Iter(i + 1, B);
             B *= f;
@@ -418,17 +467,6 @@ void FindSquares(u64 const N0, bool should_square, std::vector<u32> const & fs, 
     };
     
     Iter(0, 1);
-}
-
-template <typename T>
-std::string NumToStr(T x) {
-    std::stringstream ss;
-    auto constexpr mod = 1'000'000'000'000'000'000ULL;
-    auto const hi = u64(x / mod);
-    if (hi > 0)
-        ss << hi;
-    ss << u64(x % mod);
-    return ss.str();
 }
 
 template <typename T, typename DT>
@@ -445,10 +483,10 @@ inline T ISqrt(DT const & S) {
         ASSERT_MSG(x > 0, "S " + NumToStr(S));
         xn = (x + S / x) >> 1;
         if (AbsDiff(x, xn) <= 1) {
-            u64 const y_start = std::max<u64>(xn, 2) - 2;
-            ASSERT_MSG(y_start * y_start <= S, "S " + NumToStr(S));
-            for (u64 y = y_start; y <= xn + 2; ++y)
-                if (y * y > S)
+            T const y_start = std::max<T>(xn, 2) - 2;
+            ASSERT_MSG(DT(y_start) * y_start <= S, "S " + NumToStr(S));
+            for (T y = y_start + 1; y <= xn + 2; ++y)
+                if (DT(y) * y > S)
                     return y - 1;
             ASSERT_MSG(false, "S " + NumToStr(S));
         }
@@ -482,8 +520,9 @@ inline std::tuple<bool, u64> IsSquare(DT const & x) {
         return std::make_tuple(false, 0ULL);
     
     if (x < (1ULL << 44)) {
-        auto const root = u64(std::sqrt(double(x)) + 0.5);
-        return std::make_tuple(DT(root) * root == x, root);
+        u64 const x64 = u64(x);
+        auto const root = u64(std::sqrt(double(x64)) + 0.5);
+        return std::make_tuple(root * root == x64, root);
     } else {
         auto const root = ISqrt<u64, DT>(x);
         return std::make_tuple(DT(root) * root == x, root);
@@ -506,7 +545,7 @@ void FindSquaresSlow(u64 const N, std::vector<std::tuple<u64, u64>> & sqrs) {
 class StreamCompressor {
 public:
     static size_t constexpr
-        compression_level = ZSTD_COMPRESSION_LEVEL, rbuf_size0 = 1 << 25, wbuf_size0 = rbuf_size0 / 2;
+        compression_level = ZSTD_COMPRESSION_LEVEL, rbuf_size0 = 1ULL << 25, wbuf_size0 = rbuf_size0 / 2;
     using OutF = std::function<void(u8 const * ptr, size_t size)>;
     StreamCompressor(OutF const & outf, size_t compression_level_inp = size_t(-1))
         : rbuf_size(std::max<size_t>(rbuf_size0, ZSTD_CStreamInSize())),
@@ -564,7 +603,7 @@ private:
 class StreamDeCompressor {
 public:
     static size_t constexpr
-        rbuf_size0 = 1 << 24, wbuf_size0 = rbuf_size0 * 2;
+        rbuf_size0 = 1 << 27ULL, wbuf_size0 = rbuf_size0 * 2;
     using InpF = std::function<size_t(u8 * ptr, size_t size)>;
     StreamDeCompressor(InpF const & inpf)
         : rbuf_size(std::max<size_t>(rbuf_size0, ZSTD_DStreamInSize())),
@@ -635,7 +674,7 @@ private:
 class FileSeqWriter {
 public:
     using Filter = StreamCompressor;
-    static u64 constexpr buf_size = 1ULL << 28;
+    static u64 constexpr buf_size = 1ULL << 29;
     FileSeqWriter(std::string const & fname, size_t compression_level = size_t(-1), size_t num_threads = size_t(-1))
         : compression_level_(compression_level), num_threads_(num_threads), f_(fname, std::ios::binary) {
         if (num_threads_ == size_t(-1))
@@ -796,10 +835,10 @@ void FactorRangeCreateLoad(u64 const limit, std::vector<u32> & fs) {
     }
 }
 
-void Solve(u64 limit, size_t const L = 4) {
+void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size_t const L = 4) {
     size_t constexpr max_L = 4;
     u64 constexpr Mblock = MBLOCK;
-
+    
     ASSERT(L <= max_L);
     
     Timing gtim("Total Solve");
@@ -813,11 +852,17 @@ void Solve(u64 limit, size_t const L = 4) {
     ASSERT_MSG(limit <= WordT(-1), "word bits " + std::to_string(sizeof(WordT) * 8) +
         ", limit " + std::to_string(limit));
     
+    if (first_end == u64(-1))
+        first_end = limit;
+    
+    ASSERT(first_begin <= first_end && first_end <= limit);
+    
     std::vector<u32> fs;
     FactorRangeCreateLoad(limit, fs);
     
     auto FName = [&](size_t l) {
-        return "cpp_solutions." + std::to_string(l) + "." + std::to_string(limit);
+        return "cpp_solutions." + std::to_string(l) + "." + std::to_string(limit) +
+            "." + std::to_string(first_begin) + "." + std::to_string(first_end);
     };
     
     struct __attribute__((packed)) Entry {
@@ -827,13 +872,11 @@ void Solve(u64 limit, size_t const L = 4) {
     
     using AType = std::vector<std::array<Entry, max_L>>;
     
-    //AType A;
-    
-    u64 constexpr limit_start = 1, save_l_start = 3;
+    u64 constexpr save_l_start = 3;
     size_t const start_il = 1;
     
     size_t const cpu_count = std::thread::hardware_concurrency();
-    u64 A_tsize = limit - limit_start;
+    u64 A_tsize = first_end - first_begin;
     
     for (size_t il = start_il; il < L; ++il) {
         size_t const l = il + 1;
@@ -860,7 +903,7 @@ void Solve(u64 limit, size_t const L = 4) {
             
             if (il_first) {
                 for (u64 i = 0; i < cur_Mblock; ++i)
-                    A[i][0].x = limit_start + iMblock + i;
+                    A[i][0].x = first_begin + iMblock + i;
             } else {
                 ASSERT(fr);
                 Timing tim("ZStd read mblock total " + std::to_string((fr->Size() * cur_Mblock / A_tsize) >> 20) + " compressed-MiB");
@@ -1054,10 +1097,193 @@ void Test() {
     }
 }
 
-int main() {
+#if SUPPORT_POLLARD_RHO
+
+u64 RandomU64() {
+    thread_local std::mt19937_64 rng{(u64(std::random_device{}()) << 32) | u64(std::random_device{}())};
+    return rng();
+}
+
+u64 PowMod(u64 a, u64 b, u64 const c) {
+    u64 r = 1;
+    while (b != 0) {
+        if (b & 1)
+            r = (u128(r) * a) % c;
+        a = (u128(a) * a) % c;
+        b >>= 1;
+    }
+    return r;
+}
+
+bool IsFermatPrp(u64 N, size_t ntrials = 32) {
+    // https://en.wikipedia.org/wiki/Fermat_primality_test
+    if (N <= 16)
+        return N == 2 || N == 3 || N == 5 || N == 7 || N == 11 || N == 13;
+    for (size_t trial = 0; trial < ntrials; ++trial) {
+        u64 const witness = RandomU64() % (N - 3) + 2;
+        if (PowMod(witness, N - 1, N) != 1) {
+            //LOG << "FermatPrp N " << N << " witness " << witness << " powmod " << PowMod(witness, N - 1, N) << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
+u64 GCD(u64 a, u64 b) {
+    while (b != 0)
+        std::tie(a, b) = std::make_tuple(b, a % b);
+    return a;
+}
+
+u64 FactorTrialDivision(u64 N, std::vector<u64> & factors, u64 limit = u64(-1) >> 1) {
+    // https://en.wikipedia.org/wiki/Trial_division
+    if (N <= 1)
+        return N;
+    while ((N & 1) == 0) {
+        factors.push_back(2);
+        N >>= 1;
+    }
+    bool checked_all = false;
+    for (u64 d = 3;; d += 2) {
+        if (d * d > N) {
+            checked_all = true;
+            break;
+        }
+        if (d > limit)
+            break;
+        while (N % d == 0) {
+            factors.push_back(d);
+            N /= d;
+        }
+    }
+    if (N > 1 && checked_all) {
+        factors.push_back(N);
+        N = 1;
+    }
+    return N;
+}
+
+void FactorPollardRho(u64 N, std::vector<u64> & factors) {
+    // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
+    
+    N = FactorTrialDivision(N, factors, 1 << 6);
+    
+    if (N <= 1)
+        return;
+    
+    if (IsFermatPrp(N)) {
+        factors.push_back(N);
+        return;
+    }
+    
+    auto f = [&N](auto x) -> u64 { return (u128(x + 1) * (x + 1)) % N; };
+    auto DiffAbs = [](auto x, auto y){ return x >= y ? x - y : y - x; };
+    
+    for (size_t trial = 0; trial < 32; ++trial) {
+        u64 x = RandomU64() % (N - 3) + 1;
+        size_t total_steps = 0;
+        for (size_t cycle = 1;; ++cycle) {
+            bool good = true;
+            u64 y = x;
+            for (u64 i = 0; i < (u64(1) << cycle); ++i) {
+                x = f(x);
+                ++total_steps;
+                u64 const d = GCD(DiffAbs(x, y), N);
+                if (d > 1) {
+                    if (d == N) {
+                        good = false;
+                        break;
+                    }
+                    //std::cout << N << ": " << d << ", " << total_steps << std::endl;
+                    FactorPollardRho(d, factors);
+                    FactorPollardRho(N / d, factors);
+                    return;
+                }
+            }
+            if (!good)
+                break;
+        }
+    }
+    
+    ASSERT_MSG(false, "Pollard Rho factorization failed for N = " + std::to_string(N));
+}
+
+void TestPollard() {
+    ASSERT(IS_128);
+    ASSERT(IsFermatPrp(8'072'791));
+    {
+        std::vector<u64> fs;
+        FactorPollardRho(37'900'949, fs);
+    }
+    
+    for (size_t bits = 8; bits <= 52; bits += 4) {
+        double const tb = Time();
+        LOG << "test_bits " << bits << " (";
+        auto const hi = (bits <= 48 ? (1 << 7) : (1 << 4));
+        for (size_t itest = 0; itest < hi; ++itest) {
+            u64 const N = RandomU64() % (1ULL << bits);
+            {
+                auto const [is_sqr, root] = IsSquare<u128>(u128(N) * N);
+                ASSERT(is_sqr);
+                ASSERT(u128(root) * root == u128(N) * N);
+            }
+            {
+                auto const [is_sqr, root] = IsSquare<u128>(N - N % 4 + 2);
+                ASSERT(!is_sqr);
+            }
+            std::vector<u32> fs_dummy;
+            std::vector<std::tuple<u64, u64>> sqrs;
+            FindSquares(N, true, fs_dummy, sqrs, (u64(-1) >> 1), true);
+            for (auto const [y, x]: sqrs) {
+                //LOG << "y = " << y << ", x = " << x << std::endl;
+                ASSERT(u128(N) * N + u128(y) * y == u128(x) * x);
+            }
+        }
+        LOG << std::fixed << std::setprecision(3) << (Time() - tb) << " sec), ";
+    }
+}
+
+#endif
+
+auto ParseProgOpts(int argc, char ** argv) {
+    std::vector<std::string> args;
+    for (size_t i = 1; i < argc; ++i)
+        args.emplace_back(argv[i]);
+    std::map<std::string, std::string> m;
+    for (auto e: args) {
+        auto const oe = e;
+        ASSERT_MSG(e.size() >= 2 && e[0] == '-' && e[1] == '-', oe);
+        e.erase(0, 2);
+        auto const pos = e.find('=');
+        ASSERT_MSG(pos != std::string::npos, oe);
+        std::string key;
+        if (pos != std::string::npos) {
+            key = e.substr(0, pos);
+            e.erase(0, pos + 1);
+        }
+        std::string val = e;
+        m[key] = val;
+    }
+    return m;
+}
+
+i64 StrToNum(std::string const & s) {
+    if (s.size() >= 2 && s.substr(0, 2) == "2^")
+        return 1ULL << std::stoll(s.substr(2));
+    return std::stoll(s);
+}
+
+static std::map<std::string, std::string> PO;
+
+int main(int argc, char ** argv) {
     try {
-        //Test(); return 0;
-        Solve(LIMIT);
+        //TestPollard(); return 0;
+        PO = ParseProgOpts(argc, argv);
+        Solve(
+            PO.count("limit") ? StrToNum(PO.at("limit")) : LIMIT,
+            PO.count("first_begin") ? StrToNum(PO.at("first_begin")) : 1,
+            PO.count("first_end") ? u64(StrToNum(PO.at("first_end"))) : u64(-1)
+        );
         
         LogFile().close();
         return 0;

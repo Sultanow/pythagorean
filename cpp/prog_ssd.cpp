@@ -21,13 +21,16 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <span>
 
-#define LIMIT (1ULL << 27)
+#define LIMIT (1ULL << 26)
 #define IS_128 1
-#define MBLOCK (1ULL << 23)
+#define MBLOCK (1ULL << 21)
 
 #define SUPPORT_ZSTD 1
-#define ZSTD_COMPRESSION_LEVEL 5
+#define ZSTD_COMPRESSION_LEVEL 4
+#define ZSTD_COMPR_READ_BUF_PER_CORE (1ULL << 26)
+#define ZSTD_DECOMPR_READ_BUF_PER_CORE (1ULL << 27)
 
 #define SUPPORT_POLLARD_RHO 0
 
@@ -94,12 +97,14 @@ public:
         : name_(name), tb_(Time()) {}
     void SetName(std::string const & name) { name_ = name; }
     ~Timing() {
+        double const tp = Time() - tb_;
         LOG << "'" << name_ << "' time " << std::fixed
-            << std::setprecision(3) << (Time() - tb_) << " sec" << std::endl;
+            << std::setprecision(2) << (tp >= 60 ? (tp / 60.0) : tp)
+            << (tp >= 60 ? " mins" : " sec") << std::endl;
     }
 private:
     std::string name_;
-    double tb_ = 0;
+    double const tb_ = 0;
 };
 
 class BitVector {
@@ -439,7 +444,7 @@ void FindSquaresSlow(u64 const N, std::vector<std::tuple<u64, u64>> & sqrs) {
 class StreamCompressor {
 public:
     static size_t constexpr
-        compression_level = ZSTD_COMPRESSION_LEVEL, rbuf_size0 = 1ULL << 25, wbuf_size0 = rbuf_size0 / 2;
+        compression_level = ZSTD_COMPRESSION_LEVEL, rbuf_size0 = ZSTD_COMPR_READ_BUF_PER_CORE, wbuf_size0 = rbuf_size0;
     using OutF = std::function<void(u8 const * ptr, size_t size)>;
     StreamCompressor(OutF const & outf, size_t compression_level_inp = size_t(-1))
         : rbuf_size(std::max<size_t>(rbuf_size0, ZSTD_CStreamInSize())),
@@ -460,6 +465,14 @@ public:
             if (rbuf_.size() >= rbuf_size)
                 Compress();
         }
+    }
+    static u64 RBufSize() {
+        static u64 const rbuf_size1 = std::max<size_t>(rbuf_size0, ZSTD_CStreamInSize());
+        return rbuf_size1;
+    }
+    static u64 WBufSize() {
+        static u64 const wbuf_size1 = std::max<size_t>(wbuf_size0, ZSTD_CStreamOutSize());
+        return wbuf_size1;
     }
     ~StreamCompressor() noexcept(false) {
         Compress(true);
@@ -497,7 +510,7 @@ private:
 class StreamDeCompressor {
 public:
     static size_t constexpr
-        rbuf_size0 = 1 << 27ULL, wbuf_size0 = rbuf_size0 * 2;
+        rbuf_size0 = ZSTD_DECOMPR_READ_BUF_PER_CORE, wbuf_size0 = rbuf_size0 * 3;
     using InpF = std::function<size_t(u8 * ptr, size_t size)>;
     StreamDeCompressor(InpF const & inpf)
         : rbuf_size(std::max<size_t>(rbuf_size0, ZSTD_DStreamInSize())),
@@ -506,6 +519,14 @@ public:
         ctx_ = ZSTD_createDStream();
         ASSERT(ctx_);
         ZCHECK(ZSTD_initDStream(ctx_));
+    }
+    static u64 RBufSize() {
+        static u64 const rbuf_size1 = std::max<size_t>(rbuf_size0, ZSTD_DStreamInSize());
+        return rbuf_size1;
+    }
+    static u64 WBufSize() {
+        static u64 const wbuf_size1 = std::max<size_t>(wbuf_size0, ZSTD_DStreamOutSize());
+        return wbuf_size1;
     }
     size_t Read(u8 * ptr, size_t size) {
         size_t const start_size = size;
@@ -568,7 +589,7 @@ private:
 class FileSeqWriter {
 public:
     using Filter = StreamCompressor;
-    static u64 constexpr buf_size = 1ULL << 29;
+    static u64 constexpr buf_size = 1ULL << 28;
     FileSeqWriter(std::string const & fname, size_t compression_level = size_t(-1), size_t num_threads = size_t(-1))
         : compression_level_(compression_level), num_threads_(num_threads), f_(fname, std::ios::binary) {
         if (num_threads_ == size_t(-1))
@@ -576,6 +597,9 @@ public:
         ASSERT(f_.is_open());
     }
     ~FileSeqWriter() { Flush(); }
+    u64 Mem() const {
+        return u64(num_threads_) * (Filter::RBufSize() + Filter::WBufSize()) + buf_.capacity();
+    }
     void Flush() {
         if (!buf_.empty()) {
             AddTask(buf_.data(), buf_.size());
@@ -654,6 +678,7 @@ public:
                 return this->FRead(ptr, size); }) {
         ASSERT(f_.is_open());
     }
+    u64 Mem() const { return Filter::RBufSize() + Filter::WBufSize(); }
     template <typename T>
     void Read(T & obj) {
         ASSERT(Read(&obj, 1) == 1);
@@ -764,7 +789,7 @@ public:
     }
     
     void CreateLoad(u64 const limit) {
-        size_t constexpr compr_level = 7;
+        size_t constexpr compr_level = 8;
         ASSERT(fs_.Size() == 0 && ps_.size() == 0);
         std::string const fname = "factor_range.v2." + std::to_string(limit) + ".zst";
         if (!std::filesystem::exists(fname)) {
@@ -978,9 +1003,20 @@ void FindSquares(u64 const N0, bool should_square, FactorRangeC const & frc, std
     Iter(0, 1);
 }
 
-void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size_t const L = 4) {
+std::string FloatToStr(double x, size_t round = 0) {
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(round) << x;
+    return ss.str();
+}
+
+template <typename A, typename B>
+struct __attribute__((packed)) PackedPair {
+    A first{};
+    B second{};
+};
+
+void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1), u64 const Mblock = MBLOCK, size_t const L = 4) {
     size_t constexpr max_L = 4;
-    u64 constexpr Mblock = MBLOCK;
     
     ASSERT(L <= max_L);
     
@@ -998,7 +1034,12 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
     if (first_end == u64(-1))
         first_end = limit;
     
-    ASSERT(first_begin <= first_end && first_end <= limit);
+    ASSERT_MSG(first_begin <= first_end && first_end <= limit,
+        "first_begin " + std::to_string(first_begin) + ", first_end " +
+        std::to_string(first_end) + ", limit " + std::to_string(limit));
+    
+    LOG << "Limit " << limit << ", MBlock " << Mblock << ", FirstBegin "
+        << first_begin << ", FirstEnd " << first_end << std::endl;
     
     FactorRangeC frc;
     frc.CreateLoad(limit);
@@ -1062,90 +1103,180 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
                 }
             }
             
+            std::vector<PackedPair<WordT, u32>> sqrs_poss =
+                {PackedPair<WordT, u32>{.first = 0, .second = 0}};
+            std::vector<WordT> sqrs_vals;
+            
+            {
+                std::vector<WordT> xs;
+                for (auto const & e: A)
+                    xs.push_back(e[il - 1].x);
+                std::sort(xs.begin(), xs.end());
+                xs.resize(std::unique(xs.begin(), xs.end()) - xs.begin());
+                xs = std::vector<WordT>(xs);
+                
+                Timing tim("Compute unique squares " + FloatToStr(double(xs.size()) / (1 << 20), 1) +
+                    " M, ratio " + FloatToStr(double(xs.size()) / A.size(), 3));
+                
+                size_t const nblocks = cpu_count * 4;
+                u64 const block = (xs.size() + nblocks - 1) / nblocks;
+                std::vector<std::future<std::tuple<u64, u64, std::decay_t<decltype(sqrs_poss)>,
+                    std::decay_t<decltype(sqrs_vals)>>>> asyncs;
+                
+                double report_time = Time() - 20, tb = Time();
+                
+                for (u64 i = 0; i < xs.size(); i += block) {
+                    u64 const cur_block = std::min<u64>(block, xs.size() - i);
+                    asyncs.push_back(std::async(std::launch::async, [&, i, cur_block]{
+                        std::decay_t<decltype(sqrs_poss)> sqrs_poss0;
+                        std::decay_t<decltype(sqrs_vals)> sqrs_vals0;
+                        
+                        thread_local std::vector<std::tuple<u64, u64>> sqrs0;
+                        auto & sqrs = sqrs0;
+                        
+                        for (u64 j = 0; j < cur_block; ++j) {
+                            auto const & inp_x = xs[i + j];
+                            sqrs.clear();
+                            FindSquares(inp_x, true, frc, sqrs, limit);
+                            std::sort(sqrs.begin(), sqrs.end());
+                            for (auto const & [y, x]: sqrs) {
+                                if (y == 0)
+                                    continue;
+                                if (x >= limit)
+                                    continue;
+                                sqrs_vals0.push_back(x);
+                            }
+                            ASSERT(sqrs_vals0.size() <= u32(-1));
+                            sqrs_poss0.push_back({inp_x, u32(sqrs_vals0.size())});
+                        }
+                        
+                        sqrs_vals0.shrink_to_fit();
+                        sqrs_poss0.shrink_to_fit();
+                        
+                        return std::make_tuple(i, i + cur_block, std::move(sqrs_poss0), std::move(sqrs_vals0));
+                    }));
+                    while (asyncs.size() >= cpu_count * 2 || i + block >= xs.size() && asyncs.size() > 0) {
+                        auto & e = *asyncs.begin();
+                        if (e.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
+                            std::this_thread::yield();
+                            continue;
+                        }
+                        auto const res = e.get();
+                        auto const & [begin, end, poss, vals] = res;
+                        u64 prev_off = 0;
+                        for (auto const & [inp_x, off]: poss) {
+                            for (u64 j = prev_off; j < off; ++j)
+                                sqrs_vals.push_back(vals.at(j));
+                            ASSERT(sqrs_vals.size() <= u32(-1));
+                            sqrs_poss.push_back({inp_x, u32(sqrs_vals.size())});
+                            prev_off = off;
+                        }
+                        asyncs.erase(asyncs.begin());
+                        if (Time() - report_time >= 30
+                            // || asyncs.size() == 0
+                        ) {
+                            LOG << "Unique squares i " << std::fixed
+                                << std::setprecision(1) << double(sqrs_poss.size() - 1) / (1 << 20) << "/"
+                                << std::setprecision(1) << double(xs.size()) / (1 << 20) << " M, ELA "
+                                << std::setprecision(1) << (Time() - tb) / 60.0 << " mins, ETA "
+                                << std::setprecision(1) << (1.0 - double(sqrs_poss.size() - 1) / xs.size()) * (Time() - tb) /
+                                    (double(sqrs_poss.size() - 1) / xs.size()) / 60.0 << " mins" << std::endl;
+                            report_time = Time();
+                        }
+                    }
+                }
+                
+                sqrs_poss.shrink_to_fit();
+                sqrs_vals.shrink_to_fit();
+            }
+            
             size_t const nblocks = cpu_count * 4;
             u64 const block = (A.size() + nblocks - 1) / nblocks;
             std::vector<std::future<std::tuple<std::pair<u64, u64>, AType>>> asyncs;
             std::map<u64, std::tuple<std::pair<u64, u64>, AType>> Ats;
             u64 Ats_processed = 0, Ats_new = 0;
             
-            for (u64 iblock = 0; iblock < A.size(); iblock += block) {
-                u64 const cur_size = std::min<u64>(A.size() - iblock, block);
+            {
+                Timing tim("Composing mblock tuples from unique squares");
                 
-                asyncs.push_back(std::async(std::launch::async, [&, il, iblock, cur_size]{
-                    AType At;
-                    if (cur_size == 0)
-                        return std::make_tuple(std::pair{iblock, iblock + cur_size}, std::move(At));
-                    thread_local std::vector<std::tuple<u64, u64>> sqrs0;
-                    auto & sqrs = sqrs0;
-                    double avg_sqrs0 = 0, avg_sqrs_cnt0 = 0;
-                    for (u64 i = iblock; i < iblock + cur_size; ++i) {
-                        sqrs.clear();
-                        FindSquares(A[i][il - 1].x, true, frc, sqrs, limit);
-                        std::sort(sqrs.begin(), sqrs.end());
-                        avg_sqrs0 += sqrs.size();
-                        avg_sqrs_cnt0 += 1;
-                        u64 const px2 = u64(A[i][il - 1].x) * A[i][il - 1].x;
-                        for (auto const [y, x]: sqrs) {
-                            if (y == 0)
-                                continue;
-                            if (x >= limit)
-                                continue;
-                            DWordT const x2 = DWordT(x) * x;
-                            bool bad = false;
-                            for (size_t jl = 0; jl + 1 < il; ++jl)
-                                if (!std::get<0>(IsSquare<DWordT>(x2 - DWordT(A[i][jl].x) * A[i][jl].x))) {
-                                    bad = true;
-                                    break;
-                                }
-                            if (bad)
-                                continue;
-                            At.resize(At.size() + 1);
-                            std::memcpy(&At.back()[0], &A[i][0], int(((u8*)&A[i][il]) - ((u8*)&A[i][0])));
-                            //ASSERT_MSG(x <= u64(u32(-1)), "x_prev " + std::to_string(A[i][il - 1].x) +
-                            //    ", y " + std::to_string(y) + ", x " + std::to_string(x));
-                            At.back()[il].x = x;
+                for (u64 iblock = 0; iblock < A.size(); iblock += block) {
+                    u64 const cur_size = std::min<u64>(A.size() - iblock, block);
+                    
+                    asyncs.push_back(std::async(std::launch::async, [&, il, iblock, cur_size]{
+                        AType At;
+                        if (cur_size == 0)
+                            return std::make_tuple(std::pair{iblock, iblock + cur_size}, std::move(At));
+                        double avg_sqrs0 = 0, avg_sqrs_cnt0 = 0;
+                        for (u64 i = iblock; i < iblock + cur_size; ++i) {
+                            auto const inp_x = A[i][il - 1].x;
+                            auto const it_second = std::lower_bound(sqrs_poss.begin() + 1, sqrs_poss.end(), PackedPair<WordT, u32>{
+                                inp_x, u32(0)}, [&](auto const & a, auto const & b){ return a.first < b.first; });
+                            auto const it_first = it_second - 1;
+                            ASSERT(sqrs_poss.begin() <= it_second && it_second < sqrs_poss.end());
+                            ASSERT(it_second->first == inp_x);
+                            std::span<WordT> sqrs(sqrs_vals.begin() + (it_first->second), sqrs_vals.begin() + (it_second->second));
+                            avg_sqrs0 += sqrs.size();
+                            avg_sqrs_cnt0 += 1;
+                            for (auto const & x: sqrs) {
+                                if (x >= limit)
+                                    continue;
+                                DWordT const x2 = DWordT(x) * x;
+                                bool bad = false;
+                                for (size_t jl = 0; jl + 1 < il; ++jl)
+                                    if (!std::get<0>(IsSquare<DWordT>(x2 - DWordT(A[i][jl].x) * A[i][jl].x))) {
+                                        bad = true;
+                                        break;
+                                    }
+                                if (bad)
+                                    continue;
+                                At.resize(At.size() + 1);
+                                std::memcpy(&At.back()[0], &A[i][0], int(((u8*)&A[i][il]) - ((u8*)&A[i][0])));
+                                At.back()[il].x = x;
+                            }
                         }
+                        avg_sqrs += avg_sqrs0;
+                        avg_sqrs_cnt += avg_sqrs_cnt0;
+                        return std::make_tuple(std::pair{iblock, iblock + cur_size}, AType(At));
+                    }));
+                    
+                    while (asyncs.size() >= cpu_count * 2 ||
+                            iblock + block >= A.size() && asyncs.size() > 0) {
+                        for (ptrdiff_t ie = ptrdiff_t(asyncs.size()) - 1; ie >= 0; --ie) {
+                            auto & e = asyncs.at(ie);
+                            if (e.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready)
+                                continue;
+                            auto const r = e.get();
+                            asyncs.erase(asyncs.begin() + ie);
+                            num_new_sols += std::get<1>(r).size();
+                            Ats_new += std::get<1>(r).size();
+                            Ats_processed += std::get<0>(r).second - std::get<0>(r).first;
+                            Ats[std::get<0>(r).first] = std::move(r);
+                        }
+                        std::this_thread::yield();
                     }
-                    avg_sqrs += avg_sqrs0;
-                    avg_sqrs_cnt += avg_sqrs_cnt0;
-                    return std::make_tuple(std::pair{iblock, iblock + cur_size}, AType(At));
-                }));
-                
-                while (asyncs.size() >= cpu_count * 2 ||
-                        iblock + block >= A.size() && asyncs.size() > 0) {
-                    for (ptrdiff_t ie = ptrdiff_t(asyncs.size()) - 1; ie >= 0; --ie) {
-                        auto & e = asyncs.at(ie);
-                        if (e.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready)
-                            continue;
-                        auto const r = e.get();
-                        asyncs.erase(asyncs.begin() + ie);
-                        num_new_sols += std::get<1>(r).size();
-                        Ats_new += std::get<1>(r).size();
-                        Ats_processed += std::get<0>(r).second - std::get<0>(r).first;
-                        Ats[std::get<0>(r).first] = std::move(r);
+                    
+                    if (Ats.size() > 0 && Time() - report_time >= 30 || iblock + block >= A.size()) {
+                        double const ratio_passed = std::max<double>(1.0e-6, double(iMblock + Ats_processed) / A_tsize),
+                            ratio_left = 1.0 - ratio_passed;
+                        ASSERT(ratio_left >= -1.0e-6);
+                        u64 A2mem = 0;
+                        for (auto const & [k, v]: Ats)
+                            A2mem += u64(std::get<1>(v).capacity()) * sizeof(std::decay_t<decltype(std::get<1>(v))>::value_type);
+                        LOG << "L " << l << "/" << L << ", i " << std::setfill(' ') << std::setw(8)
+                            << std::fixed << std::setprecision(2) << (iMblock + Ats_processed) / 1'000'000.0 << "/"
+                            << std::fixed << std::setprecision(2) << A_tsize / 1'000'000.0
+                            << " M, new " << std::fixed << std::setprecision(2) << (num_new_sols / 1'000'000.0) << " M, avg sqrs "
+                            << std::fixed << std::setprecision(2) << (avg_sqrs / std::max<double>(1, avg_sqrs_cnt))
+                            << std::setprecision(1) << ", ELA " << (Time() - tb) / 60.0 << " mins, ETA "
+                            << std::setprecision(1) << (ratio_left / ratio_passed * (Time() - tb) / 60.0) << " mins, Mem [USqrs "
+                            << ((sqrs_poss.capacity() * sizeof(std::decay_t<decltype(sqrs_poss)>::value_type) +
+                                 sqrs_vals.capacity() * sizeof(std::decay_t<decltype(sqrs_vals)>::value_type)) >> 20)
+                            << " ZStd " << ((fw.Mem() + fr->Mem()) >> 20) << " FS " << (frc.Mem() >> 20) << " A "
+                            << (u64(A.capacity()) * sizeof(std::decay_t<decltype(A)>::value_type) >> 20) << " A2 "
+                            << (A2mem >> 20) << "] MiB"
+                            << std::endl;
+                        report_time = Time();
                     }
-                    std::this_thread::yield();
-                }
-                
-                if (Ats.size() > 0 && Time() - report_time >= 30 || iblock + block >= A.size()) {
-                    double const ratio_passed = std::max<double>(1.0e-6, double(iMblock + Ats_processed) / A_tsize),
-                        ratio_left = 1.0 - ratio_passed;
-                    ASSERT(ratio_left >= -1.0e-6);
-                    u64 A2mem = 0;
-                    for (auto const & [k, v]: Ats)
-                        A2mem += u64(std::get<1>(v).capacity()) * sizeof(std::decay_t<decltype(std::get<1>(v))>::value_type);
-                    LOG << "L " << l << "/" << L << ", i " << std::setfill(' ') << std::setw(8)
-                        << std::fixed << std::setprecision(2) << (iMblock + Ats_processed) / 1'000'000.0 << "/"
-                        << std::fixed << std::setprecision(2) << A_tsize / 1'000'000.0
-                        << " M, new " << std::fixed << std::setprecision(2) << (num_new_sols / 1'000'000.0) << " M, avg sqrs "
-                        << std::fixed << std::setprecision(2) << (avg_sqrs / std::max<double>(1, avg_sqrs_cnt))
-                        << std::setprecision(1) << ", ELA " << (Time() - tb) / 60.0 << " mins, ETA "
-                        << std::setprecision(1) << (ratio_left / ratio_passed * (Time() - tb) / 60.0) << " mins, Mem [FS "
-                        << (frc.Mem() >> 20) << " A "
-                        << (u64(A.capacity()) * sizeof(std::decay_t<decltype(A)>::value_type) >> 20) << " A2 "
-                        << (A2mem >> 20) << "] MiB"
-                        << std::endl;
-                    report_time = Time();
                 }
             }
             
@@ -1187,7 +1318,7 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
             
             if (l >= save_l_start) {
                 {
-                    Timing tim("Saving results to file '" + FName(l) + "'");
+                    Timing tim("Saving mblock results to file '" + FName(l) + "'");
                     std::ofstream f(FName(l), std::ios::app);
                     for (auto const & e: A2) {
                         size_t const jend = il + 1;
@@ -1197,7 +1328,7 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), size
                     }
                 }
                 {
-                    Timing tim("Checking tuples correctness");
+                    Timing tim("Checking mblock tuples correctness");
                     for (auto const & e: A2)
                         for (size_t jl = 0; jl <= il; ++jl) {
                             ASSERT(std::get<0>(IsSquare<DWordT>(DWordT(e[jl].x) * e[jl].x)));
@@ -1424,9 +1555,32 @@ auto ParseProgOpts(int argc, char ** argv) {
 }
 
 i64 StrToNum(std::string const & s) {
-    if (s.size() >= 2 && s.substr(0, 2) == "2^")
-        return 1ULL << std::stoll(s.substr(2));
-    return std::stoll(s);
+    std::function<i64(std::string const &)> Expr = [&](std::string const & s) -> i64 {
+        auto pos = s.find(' ');
+        if (pos != std::string::npos)
+            return Expr(s.substr(0, pos) + s.substr(pos + 1));
+        ASSERT(!s.empty());
+        pos = s.find('+');
+        if (pos != std::string::npos)
+            return Expr(s.substr(0, pos)) + Expr(s.substr(pos + 1));
+        pos = s.rfind('-');
+        if (pos != std::string::npos)
+            return Expr(s.substr(0, pos)) - Expr(s.substr(pos + 1));
+        pos = s.find('*');
+        if (pos != std::string::npos && (pos + 1 >= s.size() || s[pos + 1] != '*'))
+            return Expr(s.substr(0, pos)) * Expr(s.substr(pos + 1));
+        pos = s.find('/');
+        if (pos != std::string::npos)
+            return Expr(s.substr(0, pos)) / Expr(s.substr(pos + 1));
+        pos = s.find('^');
+        if (pos != std::string::npos)
+            return std::llround(std::pow(double(Expr(s.substr(0, pos))), double(Expr(s.substr(pos + 1)))));
+        pos = s.find("**");
+        if (pos != std::string::npos)
+            return std::llround(std::pow(double(Expr(s.substr(0, pos))), double(Expr(s.substr(pos + 2)))));
+        return std::stoll(s);
+    };
+    return Expr(s);
 }
 
 static std::map<std::string, std::string> PO;
@@ -1438,7 +1592,8 @@ int main(int argc, char ** argv) {
         Solve(
             PO.count("limit") ? StrToNum(PO.at("limit")) : LIMIT,
             PO.count("first_begin") ? StrToNum(PO.at("first_begin")) : 1,
-            PO.count("first_end") ? u64(StrToNum(PO.at("first_end"))) : u64(-1)
+            PO.count("first_end") ? u64(StrToNum(PO.at("first_end"))) : u64(-1),
+            PO.count("mblock") ? StrToNum(PO.at("mblock")) : MBLOCK
         );
         
         LogFile().close();

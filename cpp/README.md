@@ -75,3 +75,35 @@ For searches bigger than `2^32` we need 128 Bit calculations. In this case we ne
 ## Explaining the limit definition
 Limit is value of last element of tuple. If the limit is 1000 then `0 < w < x < y < z < 1000`.
 Therefore `Solve(1 << 29)` defines a search in the range `0 < w < x < y < z < (1 << 29)`.
+
+## Splitting and Resuming
+With the parameters `first_begin` and `first_end` we can specify a concrete search range:
+
+```console
+./prog --limit=2^36 --mblock=2^27 --first_begin=2^35+0*2^34 --first_end=2^35+1*2^34
+```
+
+## Compiling and running under Windows
+
+Install `MSYS2` and install needed tools:
+
+```console
+pacman -Syu
+pacman -Su
+pacman -S --needed base-devel mingw-w64-x86_64-toolchain
+
+pacman -S mingw-w64-x86_64-gcc
+pacman -S make
+
+pacman -S mingw-w64-x86_64-zstd
+```
+
+compile it via:
+```console
+g++ -std=c++20 -O3 -m64 /c/Users/esultano/git/pythagorean/cpp/prog_ssd.cpp -o /c/Users/esultano/git/pythagorean/cpp/prog -lpthread -lzstd -lstdc++ -lm
+```
+
+run it via:
+```console
+/c/Users/esultano/git/pythagorean/cpp/prog.exe --limit=2**35 --mblock=2**23 --first_begin=2**34+3*2**31 --first_end=2**34+4*2**31
+```

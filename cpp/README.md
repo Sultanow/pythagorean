@@ -10,6 +10,7 @@ sudo apt install software-properties-common
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 sudo apt update
 sudo apt upgrade
+sudo apt install gcc
 sudo apt install g++-11
 sudo apt install libc6
 sudo apt upgrade libstdc++6

@@ -38,6 +38,13 @@ make check
 ```
 
 #### compile
+
+For searches bigger than `2^32` we need `128 Bit` calculations. In this case we need to switch `IS_128` from `0` to `1`:
+
+```cpp
+#define IS_128 1
+```
+
 We have to add some option like "-lzstd" - this tells compiler to link ZSTD library. C++ automatically doesn't link any external libraries.
 
 ```console

@@ -62,7 +62,7 @@ If sudo is needed `apt install sudo` followed by `sudo bash`. In order to do a c
 
 ```console
 ./prog --limit=2^29 --mblock=2^26
-./prog --limit=2^32 --mblock=2^27
+./prog --limit=2^32 --mblock=2^26
 ```
 
 #### Explaining the limit definition

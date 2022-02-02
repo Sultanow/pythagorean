@@ -85,7 +85,7 @@ This allows us to split tasks between PCs by splitting intervals of `w` into sma
 ./prog --limit=2^36 --mblock=2^27 --first_begin=2^35+0*2^34 --first_end=2^35+1*2^34
 ```
 
-In order to do a conventional search up to the limit `2^29` we call the program as foloows:
+In order to do a conventional search up to the limit `2^29` without specifying a search interval, we call the program as follows:
 
 ```console
 ./prog --limit=2^29 --mblock=2^26

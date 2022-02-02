@@ -63,11 +63,10 @@ For searches bigger than `2^32` we need 128 Bit calculations. In this case we ne
 #define IS_128 1
 ```
 
-#### Explaining the limit definition
+### Explaining the limit definition
 Limit is value of last element of tuple. If the limit is `1000` then `0 < w < x < y < z < 1000`.
 Therefore `Solve(1 << 29)` defines a search range `0 < w < x < y < z < (1 << 29)`.
 
-#### Splitting and Resuming
 With the parameters `first_begin` and `first_end` we can specify a concrete search interval. We are searching for integers `w < x < y < z` such that `0 < first_begin <= w < first_end <= limit` and `0 < w < x < y < z < limit`. In other words we iterate all possible `w` within the intervall `[first_begin, first_end)` and the remaining integers `x`, `y`, `z` are all within the interval `[0, limit]`. By default `first_begin = 1` and `first_end = limit`.
 
 This allows us to split tasks between PCs by splitting intervals of `w` into smaller parts. We split `[0, limit)` intervals into non-overlapping sub-intervals `[first_begin, first_end)` and distribute these sub-intervals among many PCs.

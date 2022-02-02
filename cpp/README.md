@@ -85,6 +85,12 @@ This allows us to split tasks between PCs by splitting intervals of `w` into sma
 ./prog --limit=2^36 --mblock=2^27 --first_begin=2^35+0*2^34 --first_end=2^35+1*2^34
 ```
 
+In order to do a conventional search up to the limit `2^29` we call the program as foloows:
+
+```console
+./prog --limit=2^29 --mblock=2^26
+```
+
 ## Compiling and running under Windows
 
 Install `MSYS2` and install needed tools:

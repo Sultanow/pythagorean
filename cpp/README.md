@@ -91,12 +91,29 @@ pacman -S make
 pacman -S mingw-w64-x86_64-zstd
 ```
 
-compile it via:
+#### compile
+
 ```console
 g++ -std=c++20 -O3 -m64 /c/Users/esultano/git/pythagorean/cpp/prog_ssd.cpp -o /c/Users/esultano/git/pythagorean/cpp/prog -lpthread -lzstd -lstdc++ -lm
 ```
 
-run it via:
+#### run
+
 ```console
 /c/Users/esultano/git/pythagorean/cpp/prog.exe --limit=2**35 --mblock=2**23 --first_begin=2**34+3*2**31 --first_end=2**34+4*2**31
 ```
+
+## Searching almost solutions
+
+#### compile
+
+```console
+clang-13 -std=c++20 -O3 -m64 search_almost.cpp -o search_almost -lpthread -lzstd -lstdc++ -lm
+```
+
+#### run
+
+```console
+./search_almost cpp_solutions.3.17179869184.1.17179869184 almost.txt
+```
+

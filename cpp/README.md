@@ -57,12 +57,6 @@ If sudo is needed `apt install sudo` followed by `sudo bash`. In order to do a c
 ./prog --limit=2^29 --mblock=2^26
 ```
 
-For searches bigger than `2^32` we need 128 Bit calculations. In this case we need to switch `IS_128` from `0` to `1`:
-
-```cpp
-#define IS_128 1
-```
-
 ### Explaining the limit definition
 Limit is value of last element of tuple. If the limit is `1000` then `0 < w < x < y < z < 1000`.
 Therefore `Solve(1 << 29)` defines a search range `0 < w < x < y < z < (1 << 29)`.

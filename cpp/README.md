@@ -2,7 +2,7 @@
 
 On an Ubuntu machine do the following:
 
-install g++-11
+#### install g++-11
 
 ```console
 sudo apt update
@@ -16,34 +16,15 @@ sudo apt install libc6
 sudo apt upgrade libstdc++6
 ```
 
-install clang13:
+#### install clang13
 
 ```console
 sudo apt install lsb-release wget software-properties-common
 sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
 ```
 
-compile
-
-```console
-g++-11 -std=c++20 -O3 -m64 prog.cpp -o prog -lpthread
-```
-
-or
-
-```console
-clang-13 -std=c++20 -O3 -m64 prog.cpp -o prog -lpthread
-```
-
-run it
-
-```console
-./prog
-```
-
-## Version for larger ranges
-
-Arty's new version `prog_ssd.cpp` allows for larger ranges as it uses additionally SSD memory.
+#### install zsdt
+Arty's new version allows for larger ranges as it uses additionally SSD memory.
 To use it, we need to install `ZSTD` first:
 
 ```console
@@ -56,15 +37,25 @@ make install
 make check
 ```
 
+#### compile
 We have to add some option like "-lzstd" - this tells compiler to link ZSTD library. C++ automatically doesn't link any external libraries.
 
-run it using:
+```console
+g++-11 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
+```
+
+or
 
 ```console
 clang-13 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
 
-If sudo is needed `apt install sudo` followed by `sudo bash`.
+#### run
+If sudo is needed `apt install sudo` followed by `sudo bash`. In order to do a conventional search up to the limit `2^29` without specifying a search interval, we call the program as follows:
+
+```console
+./prog --limit=2^29 --mblock=2^26
+```
 
 For searches bigger than `2^32` we need 128 Bit calculations. In this case we need to switch `IS_128` from `0` to `1`:
 
@@ -72,23 +63,17 @@ For searches bigger than `2^32` we need 128 Bit calculations. In this case we ne
 #define IS_128 1
 ```
 
-## Explaining the limit definition
+#### Explaining the limit definition
 Limit is value of last element of tuple. If the limit is `1000` then `0 < w < x < y < z < 1000`.
 Therefore `Solve(1 << 29)` defines a search range `0 < w < x < y < z < (1 << 29)`.
 
-## Splitting and Resuming
+#### Splitting and Resuming
 With the parameters `first_begin` and `first_end` we can specify a concrete search interval. We are searching for integers `w < x < y < z` such that `0 < first_begin <= w < first_end <= limit` and `0 < w < x < y < z < limit`. In other words we iterate all possible `w` within the intervall `[first_begin, first_end)` and the remaining integers `x`, `y`, `z` are all within the interval `[0, limit]`. By default `first_begin = 1` and `first_end = limit`.
 
 This allows us to split tasks between PCs by splitting intervals of `w` into smaller parts. We split `[0, limit)` intervals into non-overlapping sub-intervals `[first_begin, first_end)` and distribute these sub-intervals among many PCs.
 
 ```console
 ./prog --limit=2^36 --mblock=2^27 --first_begin=2^35+0*2^34 --first_end=2^35+1*2^34
-```
-
-In order to do a conventional search up to the limit `2^29` without specifying a search interval, we call the program as follows:
-
-```console
-./prog --limit=2^29 --mblock=2^26
 ```
 
 ## Compiling and running under Windows

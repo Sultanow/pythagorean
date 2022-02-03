@@ -39,6 +39,7 @@ make check
 
 #### compile
 If sudo is needed `apt install sudo` followed by `sudo bash`.
+
 For searches bigger than `2^32` we need `128 Bit` calculations. In this case we need to switch `IS_128` from `0` to `1`:
 
 ```cpp

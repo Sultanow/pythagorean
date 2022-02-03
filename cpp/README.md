@@ -38,7 +38,7 @@ make check
 ```
 
 #### compile
-
+If sudo is needed `apt install sudo` followed by `sudo bash`.
 For searches bigger than `2^32` we need `128 Bit` calculations. In this case we need to switch `IS_128` from `0` to `1`:
 
 ```cpp
@@ -58,7 +58,7 @@ clang-13 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
 
 #### run
-If sudo is needed `apt install sudo` followed by `sudo bash`. In order to do a conventional search up to the limit `2^29` without specifying a search interval, we call the program as follows:
+In order to do a conventional search up to the limit `2^29` without specifying a search interval, we call the program as follows:
 
 ```console
 ./prog --limit=2^29 --mblock=2^26

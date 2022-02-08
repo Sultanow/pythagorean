@@ -78,6 +78,13 @@ This allows us to split tasks between PCs by splitting intervals of `w` into sma
 ./prog --limit=2^36 --mblock=2^27 --first_begin=2^35+0*2^34 --first_end=2^35+1*2^34
 ```
 
+## A new memory-optimized version
+The new memory-optimized version is `prog_ssd_optimized`, which consumes significantly less memory almost without loss of performance.
+
+```console
+./prog --limit=2**36 --mblock=2**25 --first_begin=0*2**34+1 --first_end=1*2**34
+```
+
 ## Compiling and running under Windows
 
 Install `MSYS2` and install needed tools:

@@ -23,12 +23,13 @@
 #include <mutex>
 #include <span>
 
-#define LIMIT (1ULL << 27)
+#define LIMIT (1ULL << 21)
 #define IS_128 1
 #define MBLOCK (1ULL << 21)
 
 #define NUM_THREADS 0
 #define FACTORS_VER 1
+#define USE_POLLARD_RHO 1
 
 #define SUPPORT_ZSTD 1
 #define ZSTD_COMPRESSION_LEVEL 4
@@ -36,8 +37,6 @@
 #define ZSTD_DECOMPR_READ_BUF_PER_CORE (1ULL << 27)
 
 #define SUPPORT_ABSL 0
-
-#define SUPPORT_POLLARD_RHO 0
 
 #if SUPPORT_ZSTD
     #include <zstd.h>
@@ -47,9 +46,12 @@
     #include <absl/container/flat_hash_map.h>
 #endif
 
+#define SUPPORT_POLLARD_RHO USE_POLLARD_RHO
+
 #define ASSERT_MSG(cond, msg) { if (!(cond)) throw std::runtime_error("Assetion (" #cond ") failed at '" __FILE__ "':" + std::to_string(__LINE__) + "! Msg: '" + std::string(msg) + "'."); }
 #define ASSERT(cond) ASSERT_MSG(cond, "")
 #define DUMP(x) { LOG << #x << " (LN " << __LINE__ << ") = " << (x) << ", " << std::flush; }
+#define LN { LOG << "LN " << __LINE__ << ", " << std::flush; }
 
 using u8 = uint8_t;
 using u16 = uint16_t;
@@ -105,7 +107,9 @@ private:
 class Timing {
 public:
     Timing(std::string const & name)
-        : name_(name), tb_(Time()) {}
+        : name_(name), tb_(Time()) {
+        //LOG << "'" << name_ << "' time start." << std::endl;
+    }
     void SetName(std::string const & name) { name_ = name; }
     ~Timing() {
         double const tp = Time() - tb_;
@@ -1050,7 +1054,7 @@ public:
             for (auto const p: ps2_)
                 brs_.push_back(BarrettRS<u32>(p));
         }
-        
+
         std::vector<std::vector<u64>> numsp(primo_cnt_);
         for (auto const e: nums) {
             auto i = primo_idxs_[e % primo_];
@@ -1066,6 +1070,7 @@ public:
             if (e.empty())
                 continue;
             for (size_t ip = 0; ip < ps2_.size(); ++ip) {
+                //if ((ip & ((1ULL << 16) - 1)) == 0) DUMP(ip);
                 auto const p = ps2_[ip];
                 auto const [br, bs] = brs_.at(ip);
                 u64 j = 0;
@@ -1108,7 +1113,7 @@ public:
                 }
             }
         }
-        
+
         std::sort(all_factors.begin(), all_factors.end());
         
         u32 poss_prev = 0;
@@ -1318,7 +1323,7 @@ void FindSquares(u64 const N0, bool should_square, FactorRangeC const & frc, std
     Iter(0, 1);
 }
 
-void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1), u64 const Mblock = MBLOCK, size_t const L = 4) {
+void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), u64 const Mblock = MBLOCK, size_t const L = 4) {
     size_t constexpr max_L = 4;
     
     ASSERT(L <= max_L);
@@ -1334,9 +1339,12 @@ void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1)
     ASSERT_MSG(limit <= WordT(-1), "word bits " + std::to_string(sizeof(WordT) * 8) +
         ", limit " + std::to_string(limit));
     
+    if (first_begin == 0)
+        first_begin = 1;
+
     if (first_end == u64(-1))
         first_end = limit;
-    
+
     ASSERT_MSG(first_begin <= first_end && first_end <= limit,
         "first_begin " + std::to_string(first_begin) + ", first_end " +
         std::to_string(first_end) + ", limit " + std::to_string(limit));
@@ -1363,7 +1371,10 @@ void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1)
     u64 A_tsize = first_end - first_begin;
     
     std::shared_ptr<FactorRangeC> frc;
-    if constexpr(FACTORS_VER == 0) {
+    
+    if constexpr(USE_POLLARD_RHO) {
+        frc = std::make_shared<FactorRangeC>();
+    } else if constexpr(FACTORS_VER == 0) {
         frc = std::make_shared<FactorRangeC>();
         frc->CreateLoad(limit);
     }
@@ -1421,7 +1432,8 @@ void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1)
                 xs.resize(std::unique(xs.begin(), xs.end()) - xs.begin());
                 xs = std::vector<WordT>(xs);
                 
-                if constexpr(FACTORS_VER == 1) {
+                if constexpr(USE_POLLARD_RHO) {
+                } else if constexpr(FACTORS_VER == 1) {
                     frc = std::make_shared<FactorRangeC>();
                     frc->Factor2(xs);
                 }
@@ -1449,7 +1461,7 @@ void Solve(u64 limit = LIMIT, u64 const first_begin = 1, u64 first_end = u64(-1)
                         for (u64 j = 0; j < cur_block; ++j) {
                             auto const & inp_x = xs[i + j];
                             sqrs.clear();
-                            FindSquares(inp_x, true, *frc, sqrs, limit);
+                            FindSquares(inp_x, true, *frc, sqrs, limit, USE_POLLARD_RHO);
                             std::sort(sqrs.begin(), sqrs.end());
                             for (auto const & [y, x]: sqrs) {
                                 if (y == 0)
@@ -1765,48 +1777,54 @@ u64 FactorTrialDivision(u64 N, std::vector<u64> & factors, u64 limit = u64(-1) >
 void FactorPollardRho(u64 N, std::vector<u64> & factors) {
     // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
     
-    N = FactorTrialDivision(N, factors, 1 << 6);
+    u64 tdiv_limit = 1ULL << 3;
     
-    if (N <= 1)
-        return;
-    
-    if (IsFermatPrp(N)) {
-        factors.push_back(N);
-        return;
-    }
-    
-    auto f = [&N](auto x) -> u64 { return (u128(x + 1) * (x + 1)) % N; };
-    auto DiffAbs = [](auto x, auto y){ return x >= y ? x - y : y - x; };
-    
-    for (size_t trial = 0; trial < 32; ++trial) {
-        u64 x = RandomU64() % (N - 3) + 1;
-        size_t total_steps = 0;
-        for (size_t cycle = 1;; ++cycle) {
-            bool good = true;
-            u64 y = x;
-            for (u64 i = 0; i < (u64(1) << cycle); ++i) {
-                x = f(x);
-                ++total_steps;
-                u64 const d = GCD(DiffAbs(x, y), N);
-                if (d > 1) {
-                    if (d == N) {
-                        good = false;
-                        break;
+    for (size_t mtrial = 0; mtrial < 3; ++mtrial) {
+        tdiv_limit *= tdiv_limit;
+        N = FactorTrialDivision(N, factors, tdiv_limit);
+        
+        if (N <= 1)
+            return;
+        
+        if (IsFermatPrp(N)) {
+            factors.push_back(N);
+            return;
+        }
+        
+        auto f = [&N](auto x) -> u64 { return (u128(x + 1) * (x + 1)) % N; };
+        auto DiffAbs = [](auto x, auto y){ return x >= y ? x - y : y - x; };
+        
+        for (size_t trial = 0; trial < 16; ++trial) {
+            u64 x = RandomU64() % (N - 3) + 1;
+            size_t total_steps = 0;
+            for (size_t cycle = 1;; ++cycle) {
+                bool good = true;
+                u64 y = x;
+                for (u64 i = 0; i < (u64(1) << cycle); ++i) {
+                    x = f(x);
+                    ++total_steps;
+                    u64 const d = GCD(DiffAbs(x, y), N);
+                    if (d > 1) {
+                        if (d == N) {
+                            good = false;
+                            break;
+                        }
+                        //std::cout << N << ": " << d << ", " << total_steps << std::endl;
+                        FactorPollardRho(d, factors);
+                        FactorPollardRho(N / d, factors);
+                        return;
                     }
-                    //std::cout << N << ": " << d << ", " << total_steps << std::endl;
-                    FactorPollardRho(d, factors);
-                    FactorPollardRho(N / d, factors);
-                    return;
                 }
+                if (!good)
+                    break;
             }
-            if (!good)
-                break;
         }
     }
     
     ASSERT_MSG(false, "Pollard Rho factorization failed for N = " + std::to_string(N));
 }
 
+#if 0
 void TestPollard() {
     ASSERT(IS_128);
     ASSERT(IsFermatPrp(8'072'791));
@@ -1841,6 +1859,7 @@ void TestPollard() {
         LOG << std::fixed << std::setprecision(3) << (Time() - tb) << " sec), ";
     }
 }
+#endif
 
 #endif
 

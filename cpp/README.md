@@ -113,9 +113,7 @@ g++ -std=c++20 -O3 -m64 /c/Users/esultano/git/pythagorean/cpp/prog_ssd.cpp -o /c
 ```
 
 ## Composing a search range by sub ranges
-We can compose the search range up to `2^36` by four sub ranges each of `2^34` size, namely `[1,2^34]`, `[2^{34}+1,2*2^34]`, `[2*2^{34}+1,3*2^{34}]` and `[3*2^34+1,4*2^{34}]`.
-
-If you're running this "./prog --limit=2^36 --mblock=2^25 --first_begin=0*2^34+1 --first_end=1*2^34" then you have to run also "--first_begin=1*2^34+1 --first_end=2*2^34" and then "--first_begin=2*2^34+1 --first_end=3*2^34" and then "--first_begin=3*2^34+1 --first_end=4*2^34" . This is because 2^36 range is composed of 4 ranges each of 2^34 size. In all command lines below the `first_begin` parameter does not need to have `+1`. The program already adds `+1` by itself when needed:
+We can compose the search range up to `2^36` by four sub ranges each of `2^34` size, namely `[1,2^34]`, `[2^{34}+1,2*2^34]`, `[2*2^{34}+1,3*2^{34}]` and `[3*2^34+1,4*2^{34}]`. In all command lines below the `first_begin` parameter does not need to have `+1`. The program already adds `+1` by itself when needed:
 
 ```console
 ./prog --limit=2^36 --mblock=2^25 --first_begin=0*2^34 --first_end=1*2^34

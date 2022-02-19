@@ -85,7 +85,7 @@ The new memory-optimized version is `prog_ssd_optimized`, which consumes signifi
 ./prog --limit=2**36 --mblock=2**25 --first_begin=0*2**34+1 --first_end=1*2**34
 ```
 
-In order to lower the size of output files, we have to reduce the `MBLOCK` parameter (e.g. from `2^26` to `2^25`, which will make output files two times smaller). Both, file size and memory usage are only influenced by `MBLOCK` parameter. The computational time is influnced only by the `first_begin` and `first_end` parameter. Using higher `limit` values will cause us to use shorter intervals. Thus the `limit` parameter influences computational time (indirectly) as well.
+In order to lower the size of output files, we have to reduce the `MBLOCK` parameter (e.g. from `2^26` to `2^25`, which will make output files two times smaller). Both, file size and memory usage are only influenced by the `MBLOCK` parameter. The computational time is influnced only by the `first_begin` and `first_end` parameter. Using higher `limit` values will cause us to use shorter intervals. Thus the `limit` parameter influences computational time (indirectly) as well.
 
 ## Compiling and running under Windows
 

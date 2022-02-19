@@ -123,6 +123,7 @@ We can compose the search range up to `2^36` by four sub ranges each of `2^34` s
 ./prog --limit=2^36 --mblock=2^25 --first_begin=2*2^34 --first_end=3*2^34
 ./prog --limit=2^36 --mblock=2^25 --first_begin=3*2^34 --first_end=4*2^34
 ```
+The meaning of the four parameters (command line options) `--limit`, `--mblock`, `--first_begin`, `--first_end` is such that we search through all values within `0 < w < x < y < z < limit`, where `first_begin < w < first_end`. In other words, only `w` is limited by `[first_begin, first_end]` and the remaining values `x`, `y`, `z` are limited by `[0, limit]`. In our case we have `[first_begin, first_end] = [0, 2^34]` and `[0, limit] = [0, 2^36]`, which means only `w` is below `2^34`, while all three values `x`, `y`, and `z` are below `2^36`.
 
 ## Searching almost solutions
 

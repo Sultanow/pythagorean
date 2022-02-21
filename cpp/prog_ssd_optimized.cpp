@@ -32,7 +32,7 @@
 #define USE_POLLARD_RHO 1
 
 #define SUPPORT_ZSTD 1
-#define ZSTD_COMPRESSION_LEVEL 4
+#define ZSTD_COMPRESSION_LEVEL 5
 #define ZSTD_COMPR_READ_BUF_PER_CORE (1ULL << 26)
 #define ZSTD_DECOMPR_READ_BUF_PER_CORE (1ULL << 27)
 
@@ -58,8 +58,7 @@ using u16 = uint16_t;
 using u32 = uint32_t;
 using i64 = int64_t;
 using u64 = uint64_t;
-using u96 = unsigned _ExtInt(96);
-using i128 = signed __int128;
+using u96 = unsigned _BitInt(96);
 using u128 = unsigned __int128;
 
 #if IS_128
@@ -73,6 +72,12 @@ using u128 = unsigned __int128;
 double Time() {
     static auto const gtb = std::chrono::high_resolution_clock::now();
     return std::chrono::duration_cast<std::chrono::duration<double>>(
+        std::chrono::high_resolution_clock::now() - gtb).count();
+}
+
+u64 TimeNS() {
+    static auto const gtb = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::high_resolution_clock::now() - gtb).count();
 }
 
@@ -379,7 +384,7 @@ std::string NumToStr(T x) {
     auto const hi = u64(x / mod);
     if (hi > 0)
         ss << hi;
-    ss << u64(x % mod);
+    ss << std::setfill('0') << std::setw(std::to_string(mod - 1).size()) << u64(x % mod);
     return ss.str();
 }
 
@@ -733,39 +738,65 @@ std::string FloatToStr(double x, size_t round = 0) {
 
 template <typename T> struct DWordOf;
 template <> struct DWordOf<u32> : std::type_identity<u64> {};
+template <> struct DWordOf<u64> : std::type_identity<u128> {};
 
 template <typename T> struct TWordOf;
 template <> struct TWordOf<u32> : std::type_identity<u96> {};
+//template <> struct TWordOf<u64> : std::type_identity<u192> {};
+
+u64 BinarySearch(u64 begin, u64 end, auto const & f) {
+    while (begin < end) {
+        u64 const mid = (begin + end) / 2;
+        if (f(mid))
+            begin = mid + 1;
+        else
+            end = mid;
+    }
+    return begin;
+}
 
 template <typename Word>
 std::tuple<Word, size_t> BarrettRS(Word n) {
     using DWord = typename DWordOf<Word>::type;
     size_t constexpr extra = 3;
-    for (size_t k = 0; k < sizeof(DWord) * 8; ++k) {
-        if (2 * (k + extra) < sizeof(Word) * 8)
-            continue;
-        if ((DWord(1) << k) <= DWord(n))
-            continue;
-        k += extra;
-        ASSERT_MSG(2 * k < sizeof(DWord) * 8, "k " + std::to_string(k));
-        DWord r = (DWord(1) << (2 * k)) / n;
-        ASSERT_MSG(DWord(r) < (DWord(1) << (sizeof(Word) * 8)),
-            "k " + std::to_string(k) + " n " + std::to_string(n));
-        ASSERT(2 * k >= sizeof(Word) * 8);
-        return std::make_tuple(Word(r), size_t(2 * k - sizeof(Word) * 8));
-    }
-    ASSERT(false);
+
+    //return std::make_tuple(Word(0), size_t(0));
+    
+    u64 k = BinarySearch(0, sizeof(DWord) * 8, [&](auto k){
+        if (2 * (k + extra) < sizeof(Word) * 8 || (DWord(1) << k) <= DWord(n))
+            return true;
+        return false;
+    });
+    ASSERT(k < sizeof(DWord) * 8);
+    
+    k += extra;
+    ASSERT_MSG(2 * k < sizeof(DWord) * 8, "k " + std::to_string(k));
+    DWord r = (DWord(1) << (2 * k)) / n;
+    ASSERT_MSG(DWord(r) < (DWord(1) << (sizeof(Word) * 8)),
+        "k " + std::to_string(k) + " n " + std::to_string(n) + " r " +
+        NumToStr(r) + " Word_bit_size " + std::to_string(sizeof(Word) * 8));
+    ASSERT(2 * k >= sizeof(Word) * 8);
+    return std::make_tuple(Word(r), size_t(2 * k - sizeof(Word) * 8));
 }
 
 template <typename Word, bool Adjust = true,
     typename DWord = typename DWordOf<Word>::type
 >
 Word BarrettMod(DWord const & x, Word const & n, Word const & r, size_t s) {
-    using TWord = typename TWordOf<Word>::type;
     using SWord = std::make_signed_t<Word>;
     
     //return x % n;
-    DWord const q = DWord(((TWord(x) * r) >> (sizeof(Word) * 8)) >> s);
+    
+    DWord q;
+    if constexpr(sizeof(Word) <= 4) {
+        using TWord = typename TWordOf<Word>::type;
+        q = DWord(((TWord(x) * r) >> (sizeof(Word) * 8)) >> s);
+    } else {
+        q = (
+            DWord(Word(x >> (sizeof(Word) * 8))) * r +
+            Word((DWord(Word(x)) * r) >> (sizeof(Word) * 8))
+        ) >> s;
+    }
     Word t = Word(DWord(x) - q * n);
     if constexpr(Adjust) {
         Word const mask = ~Word(SWord(t - n) >> (sizeof(Word) * 8 - 1));
@@ -1235,7 +1266,7 @@ private:
 };
 
 #if SUPPORT_POLLARD_RHO
-void FactorPollardRho(u64 N, std::vector<u64> & factors);
+void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials = 3, size_t trials = 16, size_t step = 0x40);
 #endif
 
 void FindSquares(u64 const N0, bool should_square, FactorRangeC const & frc, std::vector<std::tuple<u64, u64>> & sqrs, u64 limit = (u64(-1) >> 1), bool pollard_rho = false) {
@@ -1523,6 +1554,8 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), u64 
             {
                 Timing tim("Composing mblock tuples from unique squares");
                 
+                std::atomic<u64> div_filt = 0, div_filt_total = 0;
+                
                 for (u64 iblock = 0; iblock < A.size(); iblock += block) {
                     u64 const cur_size = std::min<u64>(A.size() - iblock, block);
                     
@@ -1553,6 +1586,16 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), u64 
                                     }
                                 if (bad)
                                     continue;
+                                if (0 && l == 2) {
+                                    size_t d0 = 0, d1 = 0;
+                                    for (; (A[i][0].x & ((1ULL << (d0 + 1)) - 1)) == 0; ++d0);
+                                    for (; (x & ((1ULL << (d1 + 1)) - 1)) == 0; ++d1);
+                                    ++div_filt_total;
+                                    if (d1 > d0 || d1 + 1 == d0) {
+                                        ++div_filt;
+                                        continue;
+                                    }
+                                }
                                 At.resize(At.size() + 1);
                                 std::memcpy(&At.back()[0], &A[i][0], int(((u8*)&A[i][il]) - ((u8*)&A[i][0])));
                                 At.back()[il].x = x;
@@ -1602,6 +1645,9 @@ void Solve(u64 limit = LIMIT, u64 first_begin = 1, u64 first_end = u64(-1), u64 
                         report_time = Time();
                     }
                 }
+                
+                if (div_filt_total > 0)
+                    LOG << "DivFilt " << div_filt << "/" << div_filt_total << std::endl;
             }
             
             ASSERT(asyncs.empty());
@@ -1774,7 +1820,7 @@ u64 FactorTrialDivision(u64 N, std::vector<u64> & factors, u64 limit = u64(-1) >
     return N;
 }
 
-void FactorPollardRho(u64 N, std::vector<u64> & factors) {
+void FactorPollardRhoV0(u64 N, std::vector<u64> & factors) {
     // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
     
     u64 tdiv_limit = 1ULL << 3;
@@ -1810,10 +1856,82 @@ void FactorPollardRho(u64 N, std::vector<u64> & factors) {
                             break;
                         }
                         //std::cout << N << ": " << d << ", " << total_steps << std::endl;
-                        FactorPollardRho(d, factors);
-                        FactorPollardRho(N / d, factors);
+                        ASSERT(N % d == 0);
+                        FactorPollardRhoV0(d, factors);
+                        FactorPollardRhoV0(N / d, factors);
                         return;
                     }
+                }
+                if (!good)
+                    break;
+            }
+        }
+    }
+    
+    ASSERT_MSG(false, "Pollard Rho factorization failed for N = " + std::to_string(N));
+}
+
+void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials, size_t trials, size_t step) {
+    // https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
+    
+    u64 tdiv_limit = 1ULL << 3;
+    
+    for (size_t mtrial = 0; mtrial < mtrials; ++mtrial) {
+        tdiv_limit *= tdiv_limit;
+        N = FactorTrialDivision(N, factors, tdiv_limit);
+        
+        if (N <= 1)
+            return;
+        
+        if (IsFermatPrp(N)) {
+            factors.push_back(N);
+            return;
+        }
+        
+        u64 br = 0, bs = 0;
+        std::tie(br, bs) = BarrettRS<u64>(N);
+        
+        auto f = [&](auto x) -> u64 { return BarrettMod<u64, false>(u128(x + 1) * (x + 1), N, br, bs); };
+        auto DiffAbs = [](auto x, auto y){ return x >= y ? x - y : y - x; };
+        
+        for (size_t trial = 0; trial < trials; ++trial) {
+            u64 x = RandomU64() % (N - 3) + 1;
+            size_t total_steps = 0;
+            for (size_t cycle = 1;; ++cycle) {
+                bool good = true;
+                u64 y = x, i_start = 0, i_hi = (u64(1) << cycle), x_start = x, mod = 1;
+                for (u64 i = 0; i < i_hi; ++i) {
+                    x = f(x);
+                    ++total_steps;
+                    mod = BarrettMod<u64, false>(u128(N + x - y) * mod, N, br, bs);
+                    if (!(i - i_start >= step || i + 1 >= i_hi || mod == 0 || mod == N))
+                        continue;
+                    u64 const gcd = GCD(mod, N);
+                    if (gcd == 1) {
+                        x_start = x;
+                        i_start = i + 1;
+                        continue;
+                    }
+                    u64 x2 = x_start;
+                    for (u64 j = i_start; j <= i; ++j) {
+                        x2 = f(x2);
+                        u64 const d = GCD(N + x2 - y, N);
+                        if (d <= 1)
+                            continue;
+                        if (d == N) {
+                            good = false;
+                            break;
+                        }
+                        ASSERT(N % d == 0);
+                        FactorPollardRho(d, factors, mtrials, trials, step);
+                        FactorPollardRho(N / d, factors, mtrials, trials, step);
+                        return;
+                    }
+                    x_start = x;
+                    i_start = i + 1;
+                    if (!good)
+                        break;
+                    ASSERT(false);
                 }
                 if (!good)
                     break;
@@ -1860,6 +1978,92 @@ void TestPollard() {
     }
 }
 #endif
+
+void TestPollard2() {
+    {
+        auto const N = 1415926535897932ULL;
+        std::vector<u64> fs;
+        FactorPollardRho(N, fs);
+        std::sort(fs.begin(), fs.end());
+        std::string s;
+        for (auto x: fs)
+            s += std::to_string(x) + ", ";
+        ASSERT_MSG(s == "2, 2, 127, 137, 13217, 1539301, ", s);
+    }
+    auto ToStr = [](auto const & v){
+        std::stringstream ss;
+        for (auto x: v)
+            ss << x << ", ";
+        return ss.str();
+    };
+    {
+        for (size_t itest = 0; itest < (1 << 13); ++itest) {
+            std::vector<u64> fs, fs2;
+            u64 n = 1;
+            for (size_t i = 0; i < 3; ++i) {
+                u64 n0 = RandomU64() % (1 << 19) + 2;
+                FactorTrialDivision(n0, fs);
+                n *= n0;
+            }
+            FactorPollardRho(n, fs2, 1);
+            std::sort(fs.begin(), fs.end());
+            std::sort(fs2.begin(), fs2.end());
+            ASSERT_MSG(fs == fs2, "n " + std::to_string(n) + " | " +
+                ToStr(fs) + " | " + ToStr(fs2));
+        }
+    }
+    {
+        std::vector<u64> nums;
+        for (size_t itest = 0; itest < (1 << 12); ++itest) {
+            u64 n = 1;
+            for (size_t i = 0; i < 2; ++i)
+                n *= RandomU64() % (1 << 28) + 2;
+            nums.push_back(n);
+        }
+        std::vector<u64> fs0, fs1;
+        {
+            auto tim0 = TimeNS();
+            for (auto n: nums) {
+                fs0.clear();
+                FactorPollardRhoV0(n, fs0);
+            }
+            tim0 = TimeNS() - tim0;
+            for (auto step: {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x100, 0x200}) {
+                auto tim1 = TimeNS();
+                for (auto n: nums) {
+                    fs1.clear();
+                    FactorPollardRho(n, fs1, 3, 16, step);
+                }
+                tim1 = TimeNS() - tim1;
+                LOG << "Pollard V0 speed " << (tim0 / nums.size() / 1000.0) << " mcs/num, V1 (step 0x"
+                    << std::hex << step << std::dec << ") speed " << (tim1 / nums.size() / 1000.0)
+                    << " mcs/num, boost " << std::fixed << std::setprecision(4) << double(tim0) / tim1 << std::endl;
+            }
+            for (auto n: nums) {
+                fs0.clear();
+                FactorPollardRhoV0(n, fs0);
+                fs1.clear();
+                FactorPollardRho(n, fs1);
+                std::sort(fs0.begin(), fs0.end());
+                std::sort(fs1.begin(), fs1.end());
+                ASSERT_MSG(fs0 == fs1, "N " + std::to_string(n) + " fs0 " + ToStr(fs0) + " fs1 " + ToStr(fs1));
+            }
+        }
+    }
+}
+
+void TestBinarySearch() {
+    size_t was_end = 0;
+    for (size_t itest = 0; (itest < (1 << 16)) || (was_end < 10); ++itest) {
+        u64 const end = RandomU64() % ((1 << 7) + 5),
+            begin = std::min<u64>(RandomU64() % ((1 << 7) + 5), end),
+            mid = begin + RandomU64() % (end - begin + 1);
+        if (mid == end)
+            ++was_end;
+        auto f = [mid](u64 i){ return i < mid; };
+        ASSERT(BinarySearch(begin, end, f) == mid);
+    }
+}
 
 #endif
 
@@ -1918,7 +2122,7 @@ static std::map<std::string, std::string> PO;
 
 int main(int argc, char ** argv) {
     try {
-        //TestPollard(); return 0;
+        //TestPollard2(); return 0;
         PO = ParseProgOpts(argc, argv);
         Solve(
             PO.count("limit") ? StrToNum(PO.at("limit")) : LIMIT,

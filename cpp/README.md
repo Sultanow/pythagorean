@@ -130,7 +130,7 @@ The meaning of the four parameters (command line options) `--limit`, `--mblock`,
 #### compile
 
 ```console
-clang-13 -std=c++20 -O3 -m64 search_almost.cpp -o search_almost -lpthread -lzstd -lstdc++ -lm
+clang-13 -std=c++20 -O3 -m64 search_almost.cpp -o search_almost -lpthread -lstdc++ -lm
 ```
 
 #### run

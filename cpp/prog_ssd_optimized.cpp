@@ -1931,7 +1931,7 @@ void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials, size_t 
                     i_start = i + 1;
                     if (!good)
                         break;
-                    ASSERT(false);
+                    ASSERT_MSG(false, "N " + std::to_string(N));
                 }
                 if (!good)
                     break;

@@ -758,7 +758,7 @@ u64 BinarySearch(u64 begin, u64 end, auto const & f) {
 template <typename Word>
 std::tuple<Word, size_t> BarrettRS(Word n) {
     using DWord = typename DWordOf<Word>::type;
-    size_t constexpr extra = 3;
+    size_t constexpr extra = 4;
 
     //return std::make_tuple(Word(0), size_t(0));
     
@@ -1891,19 +1891,28 @@ void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials, size_t 
         u64 br = 0, bs = 0;
         std::tie(br, bs) = BarrettRS<u64>(N);
         
-        auto f = [&](auto x) -> u64 { return BarrettMod<u64, false>(u128(x + 1) * (x + 1), N, br, bs); };
+        auto ModN = [&](auto const & x) {
+            auto const bar = BarrettMod<u64, false>(x, N, br, bs);
+            return bar;
+            auto const ref = u64(x % N);
+            ASSERT_MSG(bar == ref || bar == ref + N, "ref " + std::to_string(ref) + " bar " +
+                std::to_string(bar) + " x " + NumToStr(x) + " N " + std::to_string(N));
+            return bar;
+        };
+        auto f = [&](auto x) -> u64 { return ModN(u128(x + 1) * (x + 1)); };
         auto DiffAbs = [](auto x, auto y){ return x >= y ? x - y : y - x; };
         
         for (size_t trial = 0; trial < trials; ++trial) {
-            u64 x = RandomU64() % (N - 3) + 1;
+            u64 x = RandomU64() % (N - 3) + 1, rand_x = x;
             size_t total_steps = 0;
             for (size_t cycle = 1;; ++cycle) {
                 bool good = true;
                 u64 y = x, i_start = 0, i_hi = (u64(1) << cycle), x_start = x, mod = 1;
                 for (u64 i = 0; i < i_hi; ++i) {
                     x = f(x);
+                    //if (cycle == 3) std::cout << "0:i " << i << " x " << x << " y " << y << ", " << std::flush;
                     ++total_steps;
-                    mod = BarrettMod<u64, false>(u128(N + x - y) * mod, N, br, bs);
+                    mod = ModN(u128(N * 2 + x - y) * mod);
                     if (!(i - i_start >= step || i + 1 >= i_hi || mod == 0 || mod == N))
                         continue;
                     u64 const gcd = GCD(mod, N);
@@ -1915,7 +1924,8 @@ void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials, size_t 
                     u64 x2 = x_start;
                     for (u64 j = i_start; j <= i; ++j) {
                         x2 = f(x2);
-                        u64 const d = GCD(N + x2 - y, N);
+                        u64 const d = GCD(N * 2 + x2 - y, N);
+                        //if (cycle == 3) std::cout << "1:j " << j << " x " << x2 << " y " << y << " gcd " << d << ", " << std::flush;
                         if (d <= 1)
                             continue;
                         if (d == N) {
@@ -1931,7 +1941,11 @@ void FactorPollardRho(u64 N, std::vector<u64> & factors, size_t mtrials, size_t 
                     i_start = i + 1;
                     if (!good)
                         break;
-                    ASSERT_MSG(false, "N " + std::to_string(N));
+                    ASSERT_MSG(false, "N " + std::to_string(N) + " br " + std::to_string(br) + " bs " + std::to_string(bs) +
+                        " rand_x " + std::to_string(rand_x) + " total_steps " + std::to_string(total_steps) +
+                        " mtrial " + std::to_string(mtrial) + " trial " + std::to_string(trial) + " cycle " + std::to_string(cycle) +
+                        " gcd " + std::to_string(gcd) + " mod " + std::to_string(mod) + " i_start " + std::to_string(i_start) +
+                        " i " + std::to_string(i) + " x_start " + std::to_string(x_start));
                 }
                 if (!good)
                     break;
@@ -2052,6 +2066,15 @@ void TestPollard2() {
     }
 }
 
+void TestPollard3() {
+    u64 const N = 1999455751ULL; // rand_x = 1838832309ULL;
+    std::vector<u64> fs;
+    for (size_t i = 0; i < (1 << 0); ++i) {
+        fs.clear();
+        FactorPollardRho(N, fs);
+    }
+}
+
 void TestBinarySearch() {
     size_t was_end = 0;
     for (size_t itest = 0; (itest < (1 << 16)) || (was_end < 10); ++itest) {
@@ -2072,18 +2095,23 @@ auto ParseProgOpts(int argc, char ** argv) {
     for (size_t i = 1; i < argc; ++i)
         args.emplace_back(argv[i]);
     std::map<std::string, std::string> m;
+    size_t ipos = 0;
     for (auto e: args) {
-        auto const oe = e;
-        ASSERT_MSG(e.size() >= 2 && e[0] == '-' && e[1] == '-', oe);
-        e.erase(0, 2);
-        auto const pos = e.find('=');
-        ASSERT_MSG(pos != std::string::npos, oe);
-        std::string key;
-        if (pos != std::string::npos) {
-            key = e.substr(0, pos);
-            e.erase(0, pos + 1);
+        if (e.empty() || e.at(0) != '-') {
+            m["pos" + std::to_string(ipos++)] = e;
+            continue;
         }
-        std::string val = e;
+        ASSERT(e.at(0) == '-');
+        e.erase(0, 1);
+        if (!e.empty() && e.at(0) == '-')
+            e.erase(0, 1);
+        auto const eq_pos = e.find('=');
+        if (eq_pos == std::string::npos) {
+            m[e] = "";
+            continue;
+        }
+        std::string const key = e.substr(0, eq_pos),
+            val = e.substr(eq_pos + 1);
         m[key] = val;
     }
     return m;
@@ -2122,7 +2150,7 @@ static std::map<std::string, std::string> PO;
 
 int main(int argc, char ** argv) {
     try {
-        //TestPollard2(); return 0;
+        //TestPollard3(); return 0;
         PO = ParseProgOpts(argc, argv);
         Solve(
             PO.count("limit") ? StrToNum(PO.at("limit")) : LIMIT,

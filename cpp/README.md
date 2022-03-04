@@ -49,13 +49,13 @@ For searches bigger than `2^32` we need `128 Bit` calculations. In this case we 
 We have to add some option like "-lzstd" - this tells compiler to link ZSTD library. C++ automatically doesn't link any external libraries.
 
 ```console
-g++-11 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
+g++-11 -std=c++20 -O3 -m64 prog_ssd_optimized.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
 
 or
 
 ```console
-clang-13 -std=c++20 -O3 -m64 prog_ssd.cpp -o prog -lpthread -lzstd -lstdc++ -lm
+clang-13 -std=c++20 -O3 -m64 prog_ssd_optimized.cpp -o prog -lpthread -lzstd -lstdc++ -lm
 ```
 
 #### run

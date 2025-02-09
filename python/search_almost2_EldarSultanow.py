@@ -22,14 +22,14 @@ def is_known_family(w1, w2, x, y, z):
 @njit(parallel=True)
 def find_almost_solutions(range_limit):
     """Findet Near-Solutions, die nicht zur bekannten Familie gehören."""
-    solutions = []
+    solutions = []  
     
     for w1 in prange(1, range_limit):
-        for w2 in range(1, range_limit):
-            for x in range(1, range_limit):
-                for y in range(x + 1, range_limit):  # y > x
-                    for z in range(y + 1, range_limit):  # z > y
-                        # Prüfe die 9 Bedingungen
+        for w2 in range(1, range_limit):  # W2 ist unabhängig von W1
+            x_start = max(w1, w2) + 1  # W1 und W2 müssen kleiner als X sein
+            for x in range(x_start, range_limit):  
+                for y in range(x + 1, range_limit):  
+                    for z in range(y + 1, range_limit):  
                         conditions = [
                             (-x**2 + y**2, True),
                             (-x**2 + z**2, True),
@@ -49,12 +49,11 @@ def find_almost_solutions(range_limit):
                             if is_perfect_square == check:
                                 valid += 1
 
-                        # Falls mindestens 8 von 9 Bedingungen stimmen
-                        if valid >= 8:
-                            if not is_known_family(w1, w2, x, y, z):
-                                solutions.append((w1, w2, x, y, z))
+                        if valid >= 8:  
+                            if not is_known_family(w1, w2, x, y, z):  
+                                solutions.append((w1, w2, x, y, z))  
 
-    return solutions
+    return solutions 
 
 def process_range(range_limit):
     """Wrapper-Funktion, um Near-Solutions zu berechnen und auszugeben."""
@@ -63,7 +62,7 @@ def process_range(range_limit):
         print(f"{sol[0]}, {sol[1]}, {sol[2]}, {sol[3]}, {sol[4]}")
 
 if __name__ == "__main__":
-    range_limit = 500
+    range_limit = 300
 
     # Kopfzeile ausgeben
     print("w1, w2, x, y, z", flush=True)

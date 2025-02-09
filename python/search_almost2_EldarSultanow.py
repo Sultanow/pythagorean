@@ -1,24 +1,7 @@
 import math
+import numpy as np
 from multiprocessing import Pool
 from numba import njit, prange
-
-@njit
-def isqrt(n):
-    """Numba-kompatible Integer-Quadratwurzel."""
-    x = n
-    y = (x + 1) // 2
-    while y < x:
-        x = y
-        y = (x + n // x) // 2
-    return x
-
-@njit
-def is_perfect_square(n):
-    """Überprüft effizient, ob n eine perfekte Quadratzahl ist."""
-    if n < 0:
-        return False
-    root = isqrt(n)  # Ersetze math.isqrt(n) durch numba-kompatible Funktion
-    return root * root == n
 
 @njit
 def is_known_family(w1, w2, x, y, z):
@@ -61,7 +44,9 @@ def find_almost_solutions(range_limit):
 
                         valid = 0
                         for num, check in conditions:
-                            if is_perfect_square(num) == check:
+                            root = int(np.sqrt(num))
+                            is_perfect_square = (root * root == num)
+                            if is_perfect_square == check:
                                 valid += 1
 
                         # Falls mindestens 8 von 9 Bedingungen stimmen

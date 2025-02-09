@@ -46,10 +46,11 @@ def find_solutions(range_p, range_q):
 
 
 if __name__ == "__main__":
-    range_p = 100  # Bereich für p, skalierbar
-    range_q = 100  # Bereich für q, skalierbar
+    range_p = 100
+    range_q = 100
 
+    # Kopfzeile ausgeben
     print("w1, w2, x, y, z", flush=True)
-    
+
     with Pool() as pool:
         pool.starmap(find_solutions, [(range_p, range_q)])
